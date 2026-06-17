@@ -18,7 +18,7 @@ if "%GAME%"=="" set GAME=MM
 
 REM Select tileset based on game
 set TILESET=smb.json
-if /I "%GAME%"=="MM" set TILESET=extended_tiles.json
+if /I "%GAME%"=="MM" set TILESET=mm2_tileset_we.json
 
 set UNCOND_OUTPUT=%MODEL_PATH%-unconditional-samples
 

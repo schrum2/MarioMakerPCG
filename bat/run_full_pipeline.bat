@@ -1,6 +1,7 @@
 @echo off
-REM Usage: run_full_pipeline.bat <input> [type] [game] [seed]
+REM Usage: run_full_pipeline.bat <input> [model] [type] [game] [seed]
 REM <input>  path to a .txt ASCII level file or folder of .txt files
+REM [model]  Ollama model for captioning, defaults to "qwen2.5:14b"
 REM [type]   defaults to "regular"
 REM [game]   defaults to "MM"
 REM [seed]   defaults to 0
@@ -26,9 +27,9 @@ set NUM_TILES=13
 set EVAL_TILESET=mm2_tileset_full.json
 set CAPTION_ARGS=
 if /I "%GAME%"=="MM" (
-    set TILESET=extended_tiles.json
-    set NUM_TILES=17
-    set EVAL_TILESET=extended_tiles.json
+    set TILESET=mm2_tileset_we.json
+    set NUM_TILES=73
+    set EVAL_TILESET=mm2_tileset_we.json
     set CAPTION_ARGS=--grid-format tokens --tileset-we mm2_tileset_we.json
 )
 
