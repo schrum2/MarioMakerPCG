@@ -575,7 +575,7 @@ def parse_captions(raw_response):
             pass
 
     # Last resort: treat each non-empty line as its own caption.
-    lines = [ln.strip().lstrip("0123456789.-) ").strip() for ln in text.splitlines()]
+    lines = [ln.strip().lstrip("0123456789.) ").strip() for ln in text.splitlines()]
     return [ln for ln in lines if ln]
 
 
