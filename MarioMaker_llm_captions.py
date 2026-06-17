@@ -276,7 +276,7 @@ Write the JSON array of 5 captions now. DO NOT INCLUDE ANY NON-ENGLISH CHARACTER
 def build_id_to_char(tileset_path):
     with open(tileset_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    tile_chars = sorted(data["tiles"].keys())
+    tile_chars = sorted(data["tiles"].keys(), key=lambda c: ord(c[0]))
     if "_" not in tile_chars:
         tile_chars.append("_")
     return {idx: char for idx, char in enumerate(tile_chars)}
@@ -575,7 +575,7 @@ def parse_captions(raw_response):
             pass
 
     # Last resort: treat each non-empty line as its own caption.
-    lines = [ln.strip().lstrip("0123456789.) ").strip() for ln in text.splitlines()]
+    lines = [ln.strip().lstrip("0123456789.-) ").strip() for ln in text.splitlines()]
     return [ln for ln in lines if ln]
 
 
@@ -699,12 +699,13 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
         print(f"[{i + 1}/{total}] {name} ...", end=" ", flush=True)
         captions = []
+        active_prompt = prompt
         try:
             for attempt in range(max_reprompts):
                 if backend == "claude":
-                    raw = call_claude(prompt, model, api_key, max_tokens, timeout, retries)
+                    raw = call_claude(active_prompt, model, api_key, max_tokens, timeout, retries)
                 else:
-                    raw = call_ollama(prompt, model, url, timeout, retries)
+                    raw = call_ollama(active_prompt, model, url, timeout, retries)
                 captions = parse_captions(raw)
 
                 bad_char = find_non_ascii_char(captions) if captions else None
@@ -714,6 +715,12 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                     f"\n  [REPROMPT {attempt + 1}/{max_reprompts - 1}] "
                     f"non-English character {bad_char!r} in caption, retrying...",
                     end=" ", flush=True,
+                )
+                active_prompt = prompt + (
+                    f"\n\nCRITICAL: Your previous response contained the non-ASCII character {bad_char!r} (U+{ord(bad_char):04X}). "
+                    f"This is strictly forbidden. Use only plain ASCII characters (code points 0-127). "
+                    f"For example, use a hyphen-minus '-' instead of an em dash '\u2014', "
+                    f"and straight quotes instead of curly quotes. Output the JSON array now with only ASCII characters."
                 )
                 captions = []
         except RuntimeError as e:
