@@ -536,6 +536,15 @@ def call_ollama(prompt, model, url, timeout, retries):
                 ) from e
 
 
+def find_non_ascii_char(captions):
+    """Return the first non-ASCII character found across all captions, or None."""
+    for caption in captions:
+        for ch in caption:
+            if ord(ch) > 127:
+                return ch
+    return None
+
+
 def parse_captions(raw_response):
     """Parse the LLM's JSON array of 5 captions, with a line-based fallback.
 
@@ -690,16 +699,29 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
         print(f"[{i + 1}/{total}] {name} ...", end=" ", flush=True)
         captions = []
+        max_non_ascii_attempts = 3
         try:
-            if backend == "claude":
-                raw = call_claude(prompt, model, api_key, max_tokens, timeout, retries)
-            else:
-                raw = call_ollama(prompt, model, url, timeout, retries)
-            captions = parse_captions(raw)
+            for attempt in range(max_non_ascii_attempts):
+                if backend == "claude":
+                    raw = call_claude(prompt, model, api_key, max_tokens, timeout, retries)
+                else:
+                    raw = call_ollama(prompt, model, url, timeout, retries)
+                captions = parse_captions(raw)
+
+                bad_char = find_non_ascii_char(captions) if captions else None
+                if not bad_char:
+                    break
+                print(
+                    f"\n  [REPROMPT {attempt + 1}/{max_non_ascii_attempts - 1}] "
+                    f"non-English character {bad_char!r} in caption, retrying...",
+                    end=" ", flush=True,
+                )
+                captions = []
+
             if captions:
                 print(f"OK ({len(captions)} captions)")
             else:
-                print("ERROR: could not parse any captions from response")
+                print("ERROR: could not parse any captions from response without non-English characters")
                 errors += 1
         except RuntimeError as e:
             print(f"ERROR: {e}")
