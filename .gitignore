@@ -216,3 +216,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+/GENERIC_TEST_*
+*.json
+/datasets/*
+/bcd_levels/*
+/img/*
+/GENERIC_TEST
+/EXTENDED_TEST_*
+/EXTENDED_TEST
+/MM-*
+decode_swe.py
+/kLevels
+/marioLevels
+*.swe
+Claude-API-key.txt
