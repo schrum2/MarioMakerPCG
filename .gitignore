@@ -231,3 +231,5 @@ decode_swe.py
 /marioLevels
 *.swe
 Claude-API-key.txt
+OpenAI-API-key.txt
+gemini-api-key.txt
