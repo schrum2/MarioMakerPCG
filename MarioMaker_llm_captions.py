@@ -636,7 +636,7 @@ def _validate_tileset_match(dataset, id_to_char, tileset_path):
 
 def generate_captions(dataset_path, tileset_path, output_path, model, url, timeout, retries,
                        grid_format="ascii", tileset_we_path=None, ascii_output_dir=None,
-                       backend="ollama", api_key=None, max_tokens=900):
+                       backend="ollama", api_key=None, max_tokens=900, max_reprompts=3):
     with open(dataset_path, "r", encoding="utf-8") as f:
         dataset = json.load(f)
 
@@ -699,9 +699,8 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
         print(f"[{i + 1}/{total}] {name} ...", end=" ", flush=True)
         captions = []
-        max_non_ascii_attempts = 3
         try:
-            for attempt in range(max_non_ascii_attempts):
+            for attempt in range(max_reprompts):
                 if backend == "claude":
                     raw = call_claude(prompt, model, api_key, max_tokens, timeout, retries)
                 else:
@@ -712,20 +711,24 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                 if not bad_char:
                     break
                 print(
-                    f"\n  [REPROMPT {attempt + 1}/{max_non_ascii_attempts - 1}] "
+                    f"\n  [REPROMPT {attempt + 1}/{max_reprompts - 1}] "
                     f"non-English character {bad_char!r} in caption, retrying...",
                     end=" ", flush=True,
                 )
                 captions = []
-
-            if captions:
-                print(f"OK ({len(captions)} captions)")
-            else:
-                print("ERROR: could not parse any captions from response without non-English characters")
-                errors += 1
         except RuntimeError as e:
             print(f"ERROR: {e}")
+            captions = []
+
+        # If we exhausted reprompts (or hit a hard request failure) without any
+        # usable captions, don't crash and don't add this level to the output
+        # database -- just drop it and move on to the next one.
+        if not captions:
+            print("ERROR: no usable captions after reprompts; dropping level from output")
             errors += 1
+            continue
+
+        print(f"OK ({len(captions)} captions)")
 
         deterministic = item.get("prompt") if isinstance(item, dict) else None
         if deterministic:
@@ -808,6 +811,17 @@ def main():
         help="Retry attempts on network failure. Default: 10",
     )
     parser.add_argument(
+        "--max-reprompts",
+        type=int,
+        default=3,
+        help=(
+            "How many times to re-ask the LLM when its captions contain "
+            "non-English characters. When all attempts are exhausted without a "
+            "clean response, the level is dropped from the output instead of "
+            "crashing the run. Default: 3"
+        ),
+    )
+    parser.add_argument(
         "--grid-format",
         choices=["ascii", "tokens"],
         default="tokens",
@@ -868,6 +882,7 @@ def main():
         backend=args.backend,
         api_key=api_key,
         max_tokens=args.max_tokens,
+        max_reprompts=args.max_reprompts,
     )
 
 
