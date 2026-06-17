@@ -79,9 +79,9 @@ This is a "best effort" conversion, not a perfect round trip:
 
 Usage
 -----
-    python json_to_swe.py bcd_levels/json/3000009_overworld.json
-    python json_to_swe.py bcd_levels/json/3000009_overworld.json -o awesome.swe
-    python json_to_swe.py 3000009_overworld.json --user patwick --name "My Level"
+    python json_to_swe.py bcd_levels/json/<id>_overworld.json
+    python json_to_swe.py bcd_levels/json/<id>_overworld.json -o awesome.swe
+    python json_to_swe.py <id>_overworld.json --user patwick --name "My Level"
 
 If a matching *_subworld.json sits next to the overworld file it is converted
 into SB1 automatically.

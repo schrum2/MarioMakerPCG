@@ -5,8 +5,8 @@ Reads .json level files exported in the TheGreatRambler/mm2_level format.
 
 Usage
 -----
-    python mm2_viewer.py                  # open GUI, use Load JSON button
-    python mm2_viewer.py my_level.json    # auto-load on startup
+    python mm2_viewer_json.py                  # open GUI, use Load JSON button
+    python mm2_viewer_json.py my_level.json    # auto-load on startup
 
 Coordinate system
 -----------------

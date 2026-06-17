@@ -2,47 +2,33 @@
 Rebuild a .bcd course file from the JSON exported by Toost
 (toost.exe --overworldJson / --subworldJson, see toost_stuff/batch_convert.py).
 
-Background
-----------
-Toost's JSON export flattens two things into one object per file:
-  - the level-wide header (name, description, gamestyle, clear conditions,
-    timer, goal position, etc.)
-  - the header + entity arrays for ONE map (overworld or subworld)
-
-To rebuild a full Level (per level.ksy) we need both the *_overworld.json
-and *_subworld.json for a level (the level-wide fields are duplicated in
-both, so either can supply them). If only one is given, the other map is
-written out as an empty/default map.
+Toost exports one JSON file per map (overworld/subworld), each duplicating
+the level-wide header fields (name, description, gamestyle, clear
+conditions, timer, goal, etc). To rebuild a full Level (per level.ksy) we
+need both *_overworld.json and *_subworld.json; if only one is given, the
+other map is written out empty.
 
 Field layout follows level.ksy exactly (376768-byte payload =
 512-byte level header + two 188128-byte maps).
 
-Caveats (lossy fields)
-----------------------
-Toost's JSON export does not include everything in the binary format, so
-the following are written back as zero and will NOT match the original
-.bcd byte-for-byte:
-  - level header: year/month/day/hour/minute (creation date), unk1 (189
-    bytes), unk2 (1 byte)
-  - per object: unk1 (s2)
-  - per map: unk_flag bits other than the "night_time" bit, unk1 (s4),
-    unk2 padding (3516 bytes)
-  - sounds, exclamation blocks, track blocks, icicles (no JSON arrays
-    exist for these; their counts are written as 0)
-  - clear pipe "unk" marker word (set to 1 for any pipe present in the
-    JSON, 0 otherwise)
+A few fields aren't in Toost's JSON and get written back as 0, so the
+output won't match the original .bcd byte-for-byte: header unk1/unk2 and
+creation date, per-object unk1, per-map unk_flag bits besides night_time
+and unk1/unk2 padding, the sound/exclamation/track-block/icicle arrays
+(no JSON for these), and the clear-pipe "unk" marker (set to 1 if any
+pipe is present, else 0).
 
-The result is a structurally valid, encrypted .bcd that Toost / SMM2 can
-load, but it is a "best effort" reconstruction, not a perfect round trip.
+The result loads fine in Toost / SMM2 but is a best-effort reconstruction,
+not a byte-for-byte round trip.
 
 Usage
 -----
-    python json_to_bcd.py bcd_levels/json/3000009_overworld.json
-    python json_to_bcd.py bcd_levels/json/3000009_overworld.json -o out/3000009.bcd
+    python json_to_bcd.py bcd_levels/json/<id>_overworld.json
+    python json_to_bcd.py bcd_levels/json/<id>_overworld.json -o out/<id>.bcd
 
     # Drop/clamp objects this build of toost can't render (see toost_compat.py),
     # so the resulting .bcd can be previewed with toost without crashing:
-    python json_to_bcd.py bcd_levels/json/3000009_overworld.json --toost-compat
+    python json_to_bcd.py bcd_levels/json/<id>_overworld.json --toost-compat
 """
 
 import argparse
@@ -115,10 +101,9 @@ def pack_level_header(j):
     goal_x = j.get("goal_x", 0)
     goal_y = j.get("goal_y", 0)
     right_boundary = j.get("right_boundary", 0)
-    # toost exports goal_x/goal_y as the raw s2/u1 binary values (goal_y in
-    # whole tiles, goal_x in TENTHS of a tile). Some other exporters instead
-    # report both in object-coordinate units (160 per tile), which overflows
-    # goal_y's u1 field. Detect that case and rescale both back to raw units.
+    # Toost stores goal_y in whole tiles and goal_x in tenths of a tile.
+    # Some exporters report both in object-coordinate units (160/tile)
+    # instead, which overflows goal_y's u1 field - rescale back to raw units.
     if goal_y > 255:
         goal_x //= 160
         goal_y //= 160
@@ -127,20 +112,13 @@ def pack_level_header(j):
         and goal_x // 10 > right_boundary // 16
         and goal_x // 160 <= right_boundary // 16
     ):
-        # Some exporters leave goal_y in raw tile units but still report
-        # goal_x in object-coordinate units (160 per tile, like
-        # objects[].x) instead of tenths of a tile. If treating goal_x as
-        # tenths-of-a-tile would place the goal past the level's right
-        # boundary, but treating it as object-coordinate units would not,
-        # rescale 160-per-tile -> 10-per-tile. (Otherwise this build's
-        # toost reads a wildly out-of-range goal column and crashes, with
-        # or without --toost-compat.)
+        # Other exporters get goal_y right but still leave goal_x in
+        # 160/tile units. Reading it as tenths-of-a-tile would place the
+        # goal past the right boundary, so rescale to 10/tile instead.
         goal_x = (goal_x // 160) * 10
 
-    # goal_x should sit on the tile-CENTER grid (goal_x % 10 == 5, i.e.
-    # col*10 + 5), per bcd_levels/json/*_overworld.json. Some generators
-    # land exactly on a tile boundary (goal_x % 10 == 0) instead; snap to
-    # the nearest tile-center column.
+    # goal_x sits on the tile-center grid (col*10 + 5); snap stragglers
+    # that land on a tile boundary instead.
     goal_x = _snap_to_tile_anchor(goal_x, offset=5, tile=10)
 
     fixed = struct.pack(
@@ -283,19 +261,16 @@ def _pack_array(items, max_count, size, pack_fn, label):
     return bytes(out)
 
 
-# Object ids that are left-anchored (x = left_col*160 + 80, regardless of
-# width) rather than center-of-span. Generated instances of these often land
-# at arbitrary, non-grid-aligned x/y; _fix_object_anchors force-snaps both
-# axes onto the nearest valid tile anchor instead of using the odd-width
-# naive/real shift.
+# Left-anchored (x = left_col*160 + 80) rather than center-of-span;
+# _fix_object_anchors snaps these straight to the grid instead of applying
+# the odd-width naive/real shift.
 LEFT_ANCHOR_OBJ_IDS = {
     9,   # Pipe
     27,  # Goal
 }
 
-# Object ids that are placed as a single 1x1 tile in SMM2 (no in-editor
-# resize handle). A generator emitting one of these with w>1 and/or h>1
-# really means a stack/row of that many individual blocks; see
+# Always placed as a single 1x1 tile in SMM2. A generator emitting one of
+# these with w>1/h>1 really means a stack/row of individual blocks; see
 # _fix_extended_objects.
 ATOMIC_BLOCK_IDS = {
     4,    # Block
@@ -312,37 +287,26 @@ ATOMIC_BLOCK_IDS = {
     110,  # Spike Block
 }
 
-# Object ids for "stretchy" platform sprites whose w/h directly describe
-# their on-screen footprint: Mushroom Platform draws a centered "stem" for
-# the lower h-1 rows plus a full-width "cap" at the top row, while
-# Semisolid / Half-Collision Platform fill their entire w x h footprint (see
-# build_ascii_grid in mm2_json_to_ascii.py). SMM2 won't place any of these
-# smaller than 3x3; see _fix_platform_objects.
+# "Stretchy" platforms whose w/h directly describe their footprint: Mushroom
+# Platform draws a stem for the lower rows plus a full-width cap on top;
+# Semisolid/Half-Collision fill the whole w x h box (see build_ascii_grid in
+# mm2_json_to_ascii.py). SMM2 won't place any of these smaller than 3x3; see
+# _fix_platform_objects.
 PLATFORM_FILL_IDS = {14, 16, 71}  # Mushroom / Semisolid / Half-Collision Platform
 PLATFORM_MIN_SIZE = 3
 
 
 def _fix_object_anchors(objects, label="map"):
     """Real .bcd objects store x/y as the CENTER of their tile footprint:
-        x = (left_col + w/2) * 160   (x % 160 == 80 for odd w, == 0 for even w)
-        y = bottom_row * 160 + 80    (always, regardless of h)
-    (Verified against bcd_levels/json/*_overworld.json: 1x1/2x2/4x4/8x1
-    objects all follow this.)
+        x = (left_col + w/2) * 160
+        y = bottom_row * 160 + 80
+    Some exporters instead use a naive "x = col*160, y = row*160" grid with
+    no center offset, which lands the object in the right tile but draws it
+    floating half a tile off the ground grid. Detect that from odd-width
+    objects (where naive vs. real differ mod 160) and correct both axes.
 
-    Some JSON exporters/generators instead place objects on a naive
-    "x = col*160, y = row*160" grid with no center offset. toost still
-    reads x/y -> tile via x//160 (-w//2) / y//160, so the object lands in
-    the "right" tile, but is drawn 8px (half a tile) off the ground grid -
-    visually "floating between tiles" instead of sitting on them.
-
-    Detect the naive X convention from odd-width objects (where naive vs.
-    real differ mod 160) and correct both axes.
-
-    LEFT_ANCHOR_OBJ_IDS (Pipe, Goal) are excluded from the above: they're
-    left-anchored rather than center-of-span, so the odd-width naive/real
-    shift doesn't apply to them. Generated instances of these often land at
-    arbitrary, non-grid-aligned x/y ("floating" mid-tile); force-snap both
-    axes onto the nearest valid tile anchor instead.
+    Pipe/Goal (LEFT_ANCHOR_OBJ_IDS) are left-anchored, not center-of-span,
+    so they skip the above and just get snapped onto the tile grid.
     """
     odd_w = [o for o in objects if o.get("id") not in LEFT_ANCHOR_OBJ_IDS and o.get("w", 1) % 2 == 1]
     x_naive = bool(odd_w) and sum(1 for o in odd_w if o.get("x", 0) % 160 == 0) > len(odd_w) // 2
@@ -378,14 +342,11 @@ def _fix_object_anchors(objects, label="map"):
 
 
 def _fix_extended_objects(objects, label="map"):
-    """Split any ATOMIC_BLOCK_IDS object with w>1 and/or h>1 into a grid of
-    1x1 objects of the same id, one per tile of its footprint.
-
-    Some generators emit e.g. a single Hard Block object with w=1, h=4
-    instead of 4 separate 1x1 Hard Blocks stacked vertically. toost then
-    draws ONE sprite stretched over the whole footprint ("extended") instead
-    of a stack of distinct blocks. Assumes x/y have already been normalized
-    by _fix_object_anchors (x = (left_col + w/2)*160, y = bottom_row*160+80).
+    """Split any ATOMIC_BLOCK_IDS object with w>1/h>1 into a grid of 1x1
+    objects, one per tile. Some generators emit e.g. a single w=1,h=4 Hard
+    Block instead of 4 stacked 1x1 blocks; toost would draw that as one
+    sprite stretched over the footprint. Assumes x/y are already normalized
+    by _fix_object_anchors.
     """
     fixed = []
     n_split = n_total = 0
@@ -428,21 +389,12 @@ def _row_to_y(row):
 
 def _fix_platform_objects(objects, ground, label="map"):
     """Merge adjacent 1x1 PLATFORM_FILL_IDS "cap" objects on the same row
-    into one object, then grow any PLATFORM_FILL_IDS object smaller than the
-    3x3 minimum SMM2 allows down to ground level.
+    into one, then grow anything smaller than SMM2's 3x3 minimum downward.
 
-    Some generators place only a Mushroom/Semisolid/Half-Collision
-    Platform's "cap" -- a row of w=1,h=1 objects (or a single w>1,h=1
-    object) at the tile Mario stands on, with no body/stem beneath it.
-    Extra columns are added symmetrically (so a Mushroom Platform's stem
-    still falls under the originally-placed column(s)). Extra rows are
-    added BELOW the cap (so the platform's walkable top stays where it was
-    placed): first up to the 3x3 minimum SMM2 allows, then further still as
-    long as any column under the platform is missing a ground tile directly
-    below it, until the platform rests on solid ground (or hits row 0). A
-    single resized object then renders correctly on its own:
-    Semisolid/Half-Collision fill their whole footprint, while Mushroom
-    Platform fills only the center column below its cap.
+    Some generators place only a platform's top-row "cap" with no
+    body/stem beneath it. Columns are added symmetrically, rows are added
+    below the cap (keeping its walkable top where it was placed) up to the
+    3x3 minimum, then further until the platform actually rests on ground.
     """
     ground_set = {(g.get("x"), g.get("y")) for g in ground}
 

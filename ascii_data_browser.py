@@ -1,24 +1,21 @@
 import tkinter as tk
 from tkinter import ttk
-from tkinter import filedialog, messagebox  # Add messagebox for feedback
-from PIL import Image  # Ensure PIL.Image is imported
-import PIL.ImageTk  # Ensure PIL.ImageTk is imported
+from tkinter import filedialog, messagebox
+from PIL import Image
+import PIL.ImageTk
 import json
 import sys
 import os
 import level_dataset
 import torch
 from create_ascii_captions import assign_caption
-#from LR_create_ascii_captions import assign_caption as lr_assign_caption
-#from MM_create_ascii_captions import assign_caption as mm_assign_caption
-from captions.util import extract_tileset 
+from captions.util import extract_tileset
 import util.common_settings as common_settings
 import random
 import colorsys
 from util.sampler import scene_to_ascii
 from util.sampler import SampleOutput
-#from models.pipeline_loader import get_pipeline
-#from LodeRunner.loderunner.graphics import *
+from models.pipeline_loader import get_pipeline
 
 
 class TileViewer(tk.Tk):
@@ -27,36 +24,29 @@ class TileViewer(tk.Tk):
         self.title("Tile Dataset Viewer")
         self.added_sample_indexes = []
         self.composed_thumbnails = []
-        self.selected_thumb_idx = None  # Track selected thumbnail
+        self.selected_thumb_idx = None
 
-        # Set a more reasonable default window size for typical grids
-        self.window_size = 512  # px, fits 16x16 well but still scales for larger grids
+        # Scale the window to 65% of the screen so larger grids still fit.
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
         self.window_size = min(screen_width, screen_height) * 0.65
         self.tile_size = int(self.window_size / 20)
-        self.font_size = max(self.tile_size // 4, 6)  # Reduced font size for tighter display
+        self.font_size = max(self.tile_size // 4, 6)
 
         self.dataset = []
         self.id_to_char = {}
         self.current_sample_idx = 0
         self.current_caption_idx = 0
         self.show_ids = tk.BooleanVar(value=False)
-        #self.describe_locations = tk.BooleanVar(value=False)
         self.describe_absence = tk.BooleanVar(value=False)
 
-        # UI
         self.create_widgets()
         self.bind_keys()
 
-        # Optional initial load from command-line
         if dataset_path and tileset_path:
             self.load_files_from_paths(dataset_path, tileset_path)
 
-        # Lists to added level segments to the composed level
-        self.added_sample_indexes = []
-        self.composed_thumbnails = []
-        self.current_pil_image = None  # Store the current PIL image for saving
+        self.current_pil_image = None  # current PIL image, kept around for "Save Image As"
         self.canvas_context_menu = tk.Menu(self, tearoff=0)
         self.canvas_context_menu.add_command(
             label="Save Image As...",
@@ -99,8 +89,6 @@ class TileViewer(tk.Tk):
         if not self.dataset:
             return
         sample = self.dataset[self.current_sample_idx]
-        # Example: check for Lode Runner by a property or filename
-    
         caption, details = assign_caption(
             sample['scene'],
             self.id_to_char,
@@ -131,32 +119,27 @@ class TileViewer(tk.Tk):
         load_button = tk.Button(frame, text="Load Dataset & Tileset", command=self.load_files)
         load_button.pack()
 
-        # Add a button to load a trained diffusion model
         self.load_model_button = tk.Button(frame, text="Load Model", command=self.load_model)
         self.load_model_button.pack(pady=2)
 
         checkbox_frame = tk.Frame(self)
-        checkbox_frame.pack(pady=2)  # Reduced padding for tighter vertical spacing
-        
-        # Create a sub-frame for the caption options
+        checkbox_frame.pack(pady=2)
+
         caption_options_frame = tk.Frame(checkbox_frame)
         caption_options_frame.pack(side=tk.LEFT, padx=5)
-        
-        # Add checkboxes for caption generation options
+
         tk.Checkbutton(caption_options_frame, text="Show numeric IDs", variable=self.show_ids, command=self.redraw).pack(anchor=tk.W)
-        #tk.Checkbutton(caption_options_frame, text="Describe Locations", variable=self.describe_locations, state=tk.DISABLED).pack(anchor=tk.W)
         tk.Checkbutton(caption_options_frame, text="Describe Absence", variable=self.describe_absence).pack(anchor=tk.W)
-        
+
         regenerate_button = tk.Button(checkbox_frame, text="Regenerate Caption", command=self.regenerate_caption)
         regenerate_button.pack(side=tk.LEFT, padx=5)
 
         toggle_view_button = tk.Button(checkbox_frame, text="Toggle View Mode", command=self.toggle_view_mode)
         toggle_view_button.pack(side=tk.LEFT, padx=5)
 
-        self.canvas = tk.Canvas(self, bg="white", width=self.window_size, height=self.window_size - 100)  # Further reduced height to minimize empty space
-        self.canvas.pack(pady=1)  # Reduced padding for tighter vertical spacing
+        self.canvas = tk.Canvas(self, bg="white", width=self.window_size, height=self.window_size - 100)
+        self.canvas.pack(pady=1)
 
-        # Caption navigation (for scenes with multiple captions)
         caption_nav_frame = tk.Frame(self)
         caption_nav_frame.pack(pady=2)
         tk.Button(caption_nav_frame, text="< Caption", command=self.prev_caption).pack(side=tk.LEFT, padx=2)
@@ -164,33 +147,28 @@ class TileViewer(tk.Tk):
         self.caption_index_label.pack(side=tk.LEFT, padx=5)
         tk.Button(caption_nav_frame, text="Caption >", command=self.next_caption).pack(side=tk.LEFT, padx=2)
 
-        # Add Text widget for captions
         self.caption_text = tk.Text(self, height=3, width=int(self.window_size / 8), wrap=tk.WORD)
         self.caption_text.pack(pady=2)
         self.caption_text.tag_configure("center", justify="center")
-        # Make it read-only but selectable/copyable
+        # Read-only but still selectable/copyable, so block edits but not selection/copy.
         self.caption_text.bind("<Key>", lambda e: "break")
-        self.caption_text.bind("<Button-2>", lambda e: "break")  # Middle click paste
+        self.caption_text.bind("<Button-2>", lambda e: "break")
         self.caption_text.bind("<Control-v>", lambda e: "break")
         self.caption_text.bind("<Control-V>", lambda e: "break")
         self.caption_text.bind("<Delete>", lambda e: "break")
         self.caption_text.bind("<BackSpace>", lambda e: "break")
-        # Add copy support
         self.caption_text.bind("<Control-c>", self.copy_caption_text)
         self.caption_text.bind("<Control-C>", self.copy_caption_text)
         self.caption_text.bind("<Command-c>", self.copy_caption_text)
         self.caption_text.bind("<Command-C>", self.copy_caption_text)
-        # Add right-click context menu for copy
         self.caption_context_menu = tk.Menu(self, tearoff=0)
         self.caption_context_menu.add_command(label="Copy", command=self.copy_caption_text)
         self.caption_text.bind("<Button-3>", self.show_caption_context_menu)
-        self.caption_text.bind("<Control-Button-1>", self.show_caption_context_menu)  # For Mac
+        self.caption_text.bind("<Control-Button-1>", self.show_caption_context_menu)
 
-        # Combined navigation and info frame
         nav_info_frame = tk.Frame(self)
-        nav_info_frame.pack(pady=2)  # Place above composed controls and thumbnails
+        nav_info_frame.pack(pady=2)
 
-        # Sample info and jump
         self.sample_label = tk.Label(nav_info_frame, text="Sample: 0 / 0")
         self.sample_label.pack(side=tk.LEFT, padx=5)
 
@@ -199,32 +177,26 @@ class TileViewer(tk.Tk):
         self.jump_entry.pack(side=tk.LEFT)
         self.jump_entry.bind("<Return>", self.jump_to_sample)
 
-        # Generate button (initially disabled)
         self.generate_button = tk.Button(nav_info_frame, text="Generate From Scene", command=self.generate_from_scene, state=tk.DISABLED)
         self.generate_button.pack(side=tk.LEFT, padx=20)
 
-        # Steps input field
         tk.Label(nav_info_frame, text="Steps:").pack(side=tk.LEFT)
         self.steps_entry = tk.Entry(nav_info_frame, width=4)
-        self.steps_entry.insert(0, "50")  # Default value
-        self.steps_entry.config(state=tk.DISABLED)  # Initially disabled
+        self.steps_entry.insert(0, "50")
+        self.steps_entry.config(state=tk.DISABLED)
         self.steps_entry.pack(side=tk.LEFT, padx=20)
 
-        # Navigation buttons
         tk.Button(nav_info_frame, text="<< Prev", command=self.prev_sample).pack(side=tk.LEFT, padx=10)
         tk.Button(nav_info_frame, text="Next >>", command=self.next_sample).pack(side=tk.LEFT, padx=10)
 
-        # Composed level controls (below navigation)
         self.composed_frame = tk.Frame(self)
         self.composed_frame.pack(pady=(10, 2))
 
-        # Add buttons to test play the composed level
         self.play_composed_button = tk.Button(self.composed_frame, text="Play Composed Level", command=self.play_composed_level)
         self.play_composed_button.pack(side=tk.LEFT, padx=2)
         self.astar_composed_button = tk.Button(self.composed_frame, text="Use A* on Composed Level", command=self.astar_composed_level)
         self.astar_composed_button.pack(side=tk.LEFT, padx=2)
 
-        # Checkbox for switching between original and SNES graphics
         self.use_snes_graphics = tk.BooleanVar(value=False)
         self.graphics_checkbox = ttk.Checkbutton(
             self.composed_frame,
@@ -233,7 +205,6 @@ class TileViewer(tk.Tk):
         )
         self.graphics_checkbox.pack(side=tk.LEFT, padx=2)
 
-        # Add button to save composed level
         self.save_composed_button = tk.Button(
             self.composed_frame,
             text="Save Composed Level",
@@ -241,7 +212,6 @@ class TileViewer(tk.Tk):
         )
         self.save_composed_button.pack(side=tk.LEFT, padx=2)
 
-        # Add button to add current scene to composed level
         self.add_to_composed_level_button = tk.Button(
             self.composed_frame,
             text="Add To Level",
@@ -249,33 +219,27 @@ class TileViewer(tk.Tk):
         )
         self.add_to_composed_level_button.pack(side=tk.LEFT, padx=2)
 
-        # Controls for thumbnail manipulation: Move/Delete/Clear all
         tk.Button(self.composed_frame, text="Move Left", command=self.move_selected_thumbnail_left).pack(side=tk.LEFT, padx=2)
         tk.Button(self.composed_frame, text="Move Right", command=self.move_selected_thumbnail_right).pack(side=tk.LEFT, padx=2)
         tk.Button(self.composed_frame, text="Delete", command=self.delete_selected_thumbnail).pack(side=tk.LEFT, padx=2)
         self.clear_composed_button = tk.Button(self.composed_frame, text="Clear Composed Level", command=self.clear_composed_level)
         self.clear_composed_button.pack(side=tk.LEFT, padx=2)
-        
-        # Thumbnails for composed level
+
         self.composed_thumb_frame = tk.Frame(self)
         self.composed_thumb_frame.pack(fill=tk.X)
 
-        
-        # Game selection
-        # Mapping from the game on the display, to the actual internal names of each game
+        # Maps the game name shown in the dropdown to its internal id.
         self.game_display_to_real_mapping = {
             "Mario": "Mario",
             "Lode Runner": "LR",
             "Mega Man (Simple)": "MM-Simple",
             "Mega Man (Full)": "MM-Full"
         }
-        
-        #Method called every time the dropdown is updated to use the mapping, and putting it in self.game
+
         def on_game_select(Event=None):
             game_display_var = self.game_display_var.get()
             self.game.set(self.game_display_to_real_mapping.get(game_display_var, game_display_var))
-        
-        #Creating the game dropdown
+
         self.game_display_var = tk.StringVar(value="Mario")
         self.game = tk.StringVar(value=self.game_display_to_real_mapping[self.game_display_var.get()])
         self.game_label = ttk.Label(self.composed_frame, text="Select Game:", style="TLabel")
@@ -285,13 +249,11 @@ class TileViewer(tk.Tk):
         self.game_dropdown.bind("<<ComboboxSelected>>", on_game_select)
 
 
-    # method to enter txt file name and save composed level
     def save_composed_level(self):
         scene = self.merge_selected_scenes()
         if scene:
-            # Always open in the current working directory or a subfolder
             initial_dir = os.path.join(os.getcwd(), "Composed Levels")
-            os.makedirs(initial_dir, exist_ok=True)  # Ensure the folder exists
+            os.makedirs(initial_dir, exist_ok=True)
 
             file_path = filedialog.asksaveasfilename(
                 defaultextension=".txt",
@@ -300,9 +262,7 @@ class TileViewer(tk.Tk):
                 initialdir=initial_dir
             )
             if file_path:
-                # Convert scene to character grid
                 char_grid = scene_to_ascii(scene, self.id_to_char)
-                # Write to file
                 try:
                     with open(file_path, "w") as f:
                         for line in char_grid:
@@ -334,19 +294,17 @@ class TileViewer(tk.Tk):
             with open(dataset_path, 'r', encoding='utf-8') as f:
                 self.dataset = json.load(f)
 
-            # Normalize every sample to a dict with at least 'scene' and 'caption' keys.
-            # Datasets come in different shapes: raw scene grids (list of lists),
-            # or dicts that may be missing 'caption' entirely (e.g. {'name', 'scene'}
-            # produced by build_dataset_with_ascii.py), so fill in defaults rather
-            # than assuming the shape.
+            # Normalize every sample to a dict with 'scene' and 'captions' keys.
+            # Some datasets are raw scene grids (list of lists); others are
+            # dicts missing 'caption'/'captions' (e.g. build_dataset_with_ascii.py's
+            # {'name', 'scene'} output).
             normalized_dataset = []
             for item in self.dataset:
                 if isinstance(item, list):
                     normalized_dataset.append({'scene': item, 'captions': ['']})
                 else:
-                    # Datasets may store multiple captions per scene under 'captions'
-                    # (see MarioMaker_llm_captions.py); fall back to the singular
-                    # 'caption' field, or an empty placeholder if neither is present.
+                    # MarioMaker_llm_captions.py stores multiple captions under
+                    # 'captions'; fall back to the singular 'caption' field, or ''.
                     captions = item.get('captions')
                     if not captions:
                         captions = [item.get('caption', '')]
@@ -402,8 +360,8 @@ class TileViewer(tk.Tk):
                 self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 self.pipeline = get_pipeline(model_path).to(self.device)
                 print(f"Model loaded from {model_path}")
-                self.generate_button.config(state=tk.NORMAL)  # Enable the generate button
-                self.steps_entry.config(state=tk.NORMAL)  # Enable the steps entry
+                self.generate_button.config(state=tk.NORMAL)
+                self.steps_entry.config(state=tk.NORMAL)
             except Exception as e:
                 print(f"Error loading model: {e}")
                 self.generate_button.config(state=tk.DISABLED)
