@@ -107,8 +107,10 @@ class TransformerModel(nn.Module):
         with open(os.path.join(save_directory, "config.json"), "w") as f:
             json.dump(config, f)
 
+        # Save model weights
         save_file(self.state_dict(), os.path.join(save_directory, "model.safetensors"))
 
+        # Save tokenizer if present
         if self.tokenizer is not None:
             self.tokenizer.save(os.path.join(save_directory, "tokenizer.pkl"))
 
@@ -120,15 +122,18 @@ class TransformerModel(nn.Module):
         The subfolder argument specifies a subdirectory (local or in the repo).
         """
 
+        # Load config
         config_path = get_file("config.json", load_directory, subfolder)
         with open(config_path, "r") as f:
             config = json.load(f)
         model = cls(**config)
 
+        # Load weights
         weights_path = get_file("model.safetensors", load_directory, subfolder)
         state_dict = load_file(weights_path)
         model.load_state_dict(state_dict)
 
+        # Load tokenizer if available
         tokenizer_path = get_file("tokenizer.pkl", load_directory, subfolder)
         if tokenizer_path and os.path.exists(tokenizer_path):
             tokenizer = Tokenizer()
@@ -157,11 +162,15 @@ class TransformerModel(nn.Module):
             model=model,
             input_data=inputs,
             expand_nested=False,
+            #enable_output_shape=True,   
+            #roll_out="nested",
             depth=1
         )
 
+        # Save plot
         filename = 'mlm_architecture'
-        graph.visual_graph.render(filename, format='pdf', cleanup=False)
+        graph.visual_graph.render(filename, format='pdf', cleanup=False)  # Cleanup removes intermediate files
+        #graph.visual_graph.save('unet_architecture.dot')
 
     def save_architecture_pdf(self, filename="transformer_architecture.pdf", input_length=32):
         """Save a visualization of the model architecture as a PDF using torchview."""
@@ -171,6 +180,7 @@ class TransformerModel(nn.Module):
             raise ImportError("torchview is required for model visualization. Install with 'pip install torchview'.")
         import torch
         import os
+        # Create a dummy input of the correct type for the model
         captions = ["full floor. two coins. one pipe.", "floor with two gaps. one cannon. many enemies."]
         tensor = encode_token_captions(captions, self.tokenizer, self.max_seq_length, device=next(self.parameters()).device)
         input_length = tensor.size(1) if tensor.dim() > 1 else self.max_seq_length

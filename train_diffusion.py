@@ -254,7 +254,10 @@ def infer_global_step_from_log(log_file):
 def main():
     args = parse_args()
 
-    # Both loss types expect one-hot encoded targets.
+    """
+        The following logic defines the loss function variable based on user input.
+        Note: The model expects one-hot encoded targets for both loss types..
+    """
     if args.loss_type == "MSE":
         loss_fn = mse_loss
     elif args.loss_type == "REC":
@@ -263,15 +266,22 @@ def main():
         loss_fn = combined_loss
     else:
         raise ValueError(f"Unknown loss type: {args.loss_type}")
+    # Print the selected loss function to console
     print(f"Using loss function: {args.loss_type}")
 
     game_tile_counts = {
         "Mario": common_settings.MARIO_TILE_COUNT,
         "MM": common_settings.MM_EXTENDED_TILE_COUNT,
+        #"LR": common_settings.LR_TILE_COUNT,
+        #"MM-Simple": common_settings.MM_SIMPLE_TILE_COUNT,
+        #"MM-Full": common_settings.MM_FULL_TILE_COUNT,
     }
     game_tilesets = {
         "Mario": common_settings.MARIO_TILESET,
         "MM": common_settings.MM_EXTENDED_TILESET,
+        #"LR": common_settings.LR_TILESET,
+        #"MM-Simple": 'datasets/MM_Simple_Tileset.json',
+       # "MM-Full": '../TheVGLC/MegaMan/MM.json',
     }
     if args.game not in game_tile_counts:
         raise ValueError(f"Unknown game: {args.game}")
@@ -279,11 +289,13 @@ def main():
         args.num_tiles = game_tile_counts[args.game]
     args.tileset = game_tilesets[args.game]
 
+    # Check if config file is provided before training loop begins
     if hasattr(args, 'config') and args.config:
         config = gen_train_help.load_config_from_json(args.config)
         args = gen_train_help.update_args_from_config(args, config)
         print("Training will use parameters from the config file.")
 
+    # Check if output directory already exists
     if os.path.exists(args.output_dir):
         checkpoints = glob.glob(os.path.join(args.output_dir, "checkpoint-*"))
         if checkpoints:
@@ -461,20 +473,26 @@ def main():
         model, optimizer, train_dataloader, lr_scheduler
     )
     
+    # Training loop
     global_step = 0
     progress_bar = tqdm(total=args.num_epochs * num_train_batches, disable=not accelerator.is_local_main_process)
     progress_bar.set_description("Steps")
-
+    
+    # Get formatted timestamp for filenames
     formatted_date = datetime.now().strftime(r'%Y%m%d-%H%M%S')
+
+    # Create log files
     log_file = os.path.join(args.output_dir, f"training_log_{formatted_date}.jsonl")
     config_file = os.path.join(args.output_dir, f"hyperparams_{formatted_date}.json")
 
+    # Save hyperparameters to JSON file
     if accelerator.is_local_main_process:
         hyperparams = vars(args)
         with open(config_file, "w") as f:
             json.dump(hyperparams, f, indent=4)
         print(f"Saved configuration to: {config_file}")
-
+  
+    # Add function to log metrics
     def log_metrics(epoch, loss, lr, step=None, val_loss=None):
         if accelerator.is_local_main_process:
             log_entry = {
@@ -489,6 +507,7 @@ def main():
             with open(log_file, 'a') as f:
                 f.write(json.dumps(log_entry) + '\n')
 
+    # Initialize plotter if we're on the main process
     plotter, plot_thread = None, None
 
     caption_score_plotter, caption_score_plot_thread = None, None
@@ -566,12 +585,15 @@ def main():
                 if os.path.exists(lr_scheduler_path):
                     lr_scheduler.load_state_dict(torch.load(lr_scheduler_path, map_location="cpu"))
             else:
+                # Fallback to old behavior or raise an error
                 raise RuntimeError("lr_scheduler_config.json not found in checkpoint. Cannot resume scheduler correctly.")
 
+            # rewrap with accelerator
             model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
                 model, optimizer, train_dataloader, lr_scheduler
             )
 
+            # After loading the pipeline and re-preparing with accelerator:
             early_stop_path = os.path.join(latest_ckpt, "early_stop_state.json")
             if os.path.exists(early_stop_path):
                 with open(early_stop_path, "r") as f:
@@ -601,6 +623,7 @@ def main():
         
         for batch in safe_batches(train_dataloader):
 
+            # Add explicit memory clearing at start of batch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
@@ -614,18 +637,25 @@ def main():
                 optimizer.zero_grad()
             train_loss += loss.detach().item()
 
+
+            # Update progress bar
             progress_bar.update(1)
             logs = {"loss": loss.detach().item(), "step": global_step}
             progress_bar.set_postfix(**logs)
-
+            
+            # Detach tensors and clear memory
             del loss
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
 
+            
+                        
             global_step += 1
-
+        
+        # Calculate average training loss for the epoch
         avg_train_loss = train_loss / max(num_train_batches, 1)
-
+        
+        # Calculate validation loss if validation dataset exists and it's time to validate
         val_loss = None
         avg_caption_score = None
         val_loss_improved = False
@@ -640,6 +670,7 @@ def main():
                         args, model, val_batch, noise_scheduler, loss_fn, tokenizer_hf, text_encoder, accelerator
                     )
                     val_loss += val_batch_loss.item()
+                    # Clear memory after each validation batch
                     del val_batch_loss
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
@@ -647,6 +678,7 @@ def main():
             val_loss /= max(num_val_batches, 1)
 
             if args.text_conditional and args.plot_validation_caption_score:
+                # Compute caption match score for this data
                 pipeline = TextConditionalDDPMPipeline(
                     unet=accelerator.unwrap_model(model), 
                     scheduler=noise_scheduler,
@@ -654,6 +686,7 @@ def main():
                     tokenizer=tokenizer_hf if args.pretrained_language_model else None,
                     supports_pretrained_split=args.split_pretrained_sentences
                 ).to(accelerator.device)
+                # Only use the positive captions for scoring
 
                 inference_steps = args.num_inference_timesteps
                 # TODO: These should be argparse parameters
@@ -670,6 +703,7 @@ def main():
 
             model.train()
 
+            # Log caption match score
             if args.text_conditional and args.plot_validation_caption_score and accelerator.is_local_main_process and caption_score_log_file:
                 with open(caption_score_log_file, 'a') as f:
                     log_entry = {
@@ -750,8 +784,10 @@ def main():
 
         # Generate and save sample levels every N epochs
         if epoch % args.save_image_epochs == 0 or epoch == args.num_epochs - 1:
+            # Switch to eval mode
             model.eval()
-
+            
+            # Create the appropriate pipeline for generation
             if args.text_conditional:
                 pipeline = TextConditionalDDPMPipeline(
                     unet=accelerator.unwrap_model(model), 
@@ -775,14 +811,17 @@ def main():
                         negative_prompt=sample_negative_captions if args.negative_prompt_training else None 
                     ).images
             else:
+                # For unconditional generation
                 pipeline = UnconditionalDDPMPipeline(
-                    unet=accelerator.unwrap_model(model),
-                    scheduler=noise_scheduler,
+                    unet=accelerator.unwrap_model(model), 
+                    scheduler=noise_scheduler, 
                     block_embeddings=block_embeddings
                 )
                 if sprite_scaling_factors is not None:
                     pipeline.give_sprite_scaling_factors(sprite_scaling_factors)
 
+                
+                # Generate sample levels
                 with torch.no_grad():
                     samples = pipeline(
                         batch_size=4,
@@ -799,33 +838,41 @@ def main():
             prompts = sample_captions if args.text_conditional else None
             visualize_samples(samples, os.path.join(args.output_dir, f"samples_epoch_{epoch}"), use_tiles=False, prompts=prompts, game=args.game)
 
+        # Save model every N epochs
         if epoch % args.save_model_epochs == 0 or epoch == args.num_epochs - 1:
             checkpoint_dir = os.path.join(args.output_dir, f"checkpoint-{epoch}")
+            # save the model
             if args.text_conditional:
                 pipeline = TextConditionalDDPMPipeline(
-                    unet=accelerator.unwrap_model(model),
+                    unet=accelerator.unwrap_model(model), 
                     scheduler=noise_scheduler,
                     text_encoder=text_encoder,
                     tokenizer=tokenizer_hf if args.pretrained_language_model else None,
                     supports_pretrained_split=args.split_pretrained_sentences
                 ).to(accelerator.device)
+                # Save negative prompt support flag if enabled
                 if args.negative_prompt_training:
                     pipeline.supports_negative_prompt = True
             else:
                 pipeline = UnconditionalDDPMPipeline(
-                    unet=accelerator.unwrap_model(model),
+                    unet=accelerator.unwrap_model(model), 
                     scheduler=noise_scheduler,
                     block_embeddings=block_embeddings
                 )
                 if sprite_scaling_factors is not None:
                     pipeline.give_sprite_scaling_factors(sprite_scaling_factors)
-            # accelerator.prepare() sharded the model across processes; wait for all
-            # of them before the main process writes the checkpoint to disk.
+            # Wait for all processes to synchronize before saving
             accelerator.wait_for_everyone()
             pipeline.save_pretrained(checkpoint_dir)
+            # Save optimizer state
             optimizer_path = os.path.join(checkpoint_dir, "optimizer.pt")
+            # Save the optimizer state dictionary
             torch.save(optimizer.state_dict(), optimizer_path)
+            # Save LR scheduler state
+            #lr_scheduler_path = os.path.join(checkpoint_dir, "lr_scheduler.pt")
+            #torch.save(lr_scheduler.state_dict(), lr_scheduler_path)
 
+            # Save early stopping state
             early_stop_state = {
                 "best_val_loss": best_val_loss,
                 "best_caption_score": best_caption_score,
@@ -835,7 +882,8 @@ def main():
             early_stop_path = os.path.join(checkpoint_dir, "early_stop_state.json")
             with open(early_stop_path, "w") as f:
                 json.dump(early_stop_state, f)
-
+            
+            # When saving checkpoint:
             scheduler_config = {
                 "num_warmup_steps": warmup_steps,
                 "num_training_steps": total_training_steps,
@@ -845,21 +893,29 @@ def main():
                 json.dump(scheduler_config, f)
             
     try:
+        # Clean up plotting resources
         if accelerator.is_local_main_process and plotter:
+            # Better thread cleanup
             gen_train_help.kill_plotter(plotter, plot_thread)
+
             gen_train_help.kill_plotter(caption_score_plotter, caption_score_plot_thread)
 
+        # Force CUDA cleanup
         if torch.cuda.is_available():
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
 
+        # Ensure all processes are synchronized
         accelerator.wait_for_everyone()
 
     finally:
+        # Close progress bar and TensorBoard writer
         progress_bar.close()
 
+        # Replace model with best ever encountered
         if best_model_state is not None:
             model.load_state_dict(best_model_state['model_state_dict'])
+            # Save best epoch info
             best_model_info = {
                 "best_epoch": best_epoch,
                 "best_val_loss": best_val_loss,
@@ -893,14 +949,21 @@ def main():
                 pipeline.give_sprite_scaling_factors(sprite_scaling_factors)
             
         pipeline.save_pretrained(args.output_dir)
-
+        # # Save the final optimizer and learing rate scheduler states??
+        # optimizer_path = os.path.join(args.output_dir, "optimizer.pt")
+        # torch.save(optimizer.state_dict(), optimizer_path)
+        # lr_scheduler_path = os.path.join(args.output_dir, "lr_scheduler.pt")
+        # torch.save(lr_scheduler.state_dict(), lr_scheduler_path)
+        
+# Add function to load config from JSON
 def load_config_from_json(config_path):
     """Load hyperparameters from a JSON config file."""
     try:
         with open(config_path, 'r') as f:
             config = json.load(f)
             print(f"Configuration loaded from {config_path}")
-
+            
+            # Print the loaded config for verification
             print("Loaded hyperparameters:")
             for key, value in config.items():
                 print(f"  {key}: {value}")
@@ -912,6 +975,7 @@ def load_config_from_json(config_path):
 
 def update_args_from_config(args, config):
     """Update argparse namespace with values from config."""
+    # Convert config dict to argparse namespace
     for key, value in config.items():
         if hasattr(args, key):
             setattr(args, key, value)
@@ -934,7 +998,8 @@ def prepare_conditioned_batch(args, tokenizer_hf, text_encoder, scenes, captions
         scenes_for_train: torch.Tensor
         timesteps_for_train: torch.Tensor
     """
-    with torch.no_grad():
+    #Prepares the batch for training with text conditioning.
+    with torch.no_grad():         
         if args.split_pretrained_sentences:
             # Each caption is split into phrases; embedding shape: [batch, num_phrases, embedding_dim]
             combined_embeddings = st_helper.get_embeddings_split(batch_size=len(captions),
@@ -977,12 +1042,12 @@ def prepare_conditioned_batch(args, tokenizer_hf, text_encoder, scenes, captions
             assert combined_embeddings.shape[0] == len(captions)*repeat_factor, f"Batch size mismatch in token embedding: shape {combined_embeddings.shape} and captions {len(captions)}"
 
         if args.negative_prompt_training:
-            scenes_for_train = torch.cat([scenes] * 3)
-            timesteps_for_train = torch.cat([timesteps] * 3)
+            scenes_for_train = torch.cat([scenes] * 3)  # Repeat scenes three times
+            timesteps_for_train = torch.cat([timesteps] * 3)  # Repeat timesteps three times
         else:
-            # Classifier-free guidance with just uncond and cond (no negative prompt)
-            scenes_for_train = torch.cat([scenes] * 2)
-            timesteps_for_train = torch.cat([timesteps] * 2)
+            # Original classifier-free guidance with just uncond and cond
+            scenes_for_train = torch.cat([scenes] * 2)  # Repeat scenes twice
+            timesteps_for_train = torch.cat([timesteps] * 2)  # Repeat timesteps twice
 
         return combined_embeddings, scenes_for_train, timesteps_for_train
 
@@ -1038,11 +1103,12 @@ def process_diffusion_batch(
     ).long()
     
 
-    if args.text_conditional:
+    if args.text_conditional: #Here's the big difference between the two training modes
+        #If we're using text conditioning, we need to prepare the embeddings
         combined_embeddings, scenes_for_train, timesteps_for_train = prepare_conditioned_batch(
             args, tokenizer_hf, text_encoder, scenes, captions, timesteps, accelerator.device, negative_captions=negative_captions
         )
-    else:
+    else: #Otherwise they can be set as is
         combined_embeddings, scenes_for_train, timesteps_for_train = None, scenes, timesteps
 
     noise = torch.randn_like(scenes_for_train)
