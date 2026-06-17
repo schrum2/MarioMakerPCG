@@ -19,33 +19,27 @@ import models.text_model as text_model
 def train(model, train_loader, val_loader, criterion, optimizer, device, epochs, tokenizer, patience=20):
     global args
 
-    # Get formatted timestamp for filenames
     formatted_date = datetime.now().strftime(r'%Y%m%d-%H%M%S')
-    
-    # Create output directory if it doesn't exist
+
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    # Create log files
     log_file = os.path.join(args.output_dir, f"mlm_training_log_{formatted_date}.jsonl")
     accuracy_log_file = os.path.join(args.output_dir, f"mlm_accuracy_log_{formatted_date}.jsonl")
     config_file = os.path.join(args.output_dir, f"hyperparams_{formatted_date}.json")
 
-    # Save hyperparameters to JSON file
     hyperparams = vars(args)
     with open(config_file, "w") as f:
         json.dump(hyperparams, f, indent=4)
     print(f"Saved configuration to: {config_file}")
 
-    # Create two plotters - one for loss, one for accuracy
-    loss_plotter = Plotter(log_file, update_interval=5.0, left_key='loss', right_key='val_loss', 
-                           left_label='Loss', right_label='Val Loss', 
+    loss_plotter = Plotter(log_file, update_interval=5.0, left_key='loss', right_key='val_loss',
+                           left_label='Loss', right_label='Val Loss',
                            output_png=f'training_loss_{formatted_date}.png')
-    accuracy_plotter = Plotter(accuracy_log_file, update_interval=5.0, left_key='train_accuracy', 
+    accuracy_plotter = Plotter(accuracy_log_file, update_interval=5.0, left_key='train_accuracy',
                                right_key='val_accuracy', left_label='Train Accuracy', right_label='Val Accuracy',
                                output_png=f'training_accuracy_{formatted_date}.png')
-    
-    # Start plotting threads
+
     loss_plot_thread = threading.Thread(target=loss_plotter.start_plotting)
     loss_plot_thread.daemon = True
     loss_plot_thread.start()
@@ -54,7 +48,6 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs,
     accuracy_plot_thread.daemon = True
     accuracy_plot_thread.start()
 
-    # Add functions to log metrics
     def log_loss_metrics(epoch, loss, lr, val_loss=None, step=None):
         log_entry = {
             "epoch": epoch,
@@ -83,7 +76,6 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs,
     early_stop = False
     best_model_state = None
     
-    # Add learning rate scheduler
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, 
         patience=patience//2, min_lr=1e-6
@@ -107,7 +99,6 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs,
 
             loss = criterion(output.view(-1, output.size(-1)), target_batch.view(-1))
             loss.backward()
-            # Add gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             
@@ -118,8 +109,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs,
             })
         
         avg_loss = epoch_loss / len(train_loader)
-        
-        # Validation loss
+
         val_loss = None
         if val_loader is not None:
             model.eval()
@@ -137,17 +127,14 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs,
             val_loss = val_loss_total / len(val_loader)
             model.train()
 
-            
             status_msg = f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}, Val Loss: {val_loss:.4f}"
             if args.use_early_stopping:
                 status_msg += f", No Improvement: {epochs_no_improve}/{patience}"
             print(status_msg)
-            
-            # Early stopping logic
+
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 epochs_no_improve = 0
-                # Save best model state
                 best_model_state = {
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
@@ -163,25 +150,19 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs,
         else:
             print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
 
-        # Log to JSONL file
         log_loss_metrics(epoch, avg_loss, args.lr, val_loss=val_loss)
 
-        # Update learning rate scheduler
         if val_loader is not None:
             scheduler.step(val_loss)
 
-        # Save checkpoint if enabled and at the correct interval
         if args.save_checkpoints and args.checkpoint_freq > 0 and (epoch + 1) % args.checkpoint_freq == 0:
-            # Evaluate model on train and validation sets
             train_accuracy, train_correct, train_total = evaluate_model(model, tokenizer, train_loader, device, console_output=False)
             val_accuracy = float("nan")
             if val_loader is not None:
                 val_accuracy, val_correct, val_total = evaluate_model(model, tokenizer, val_loader, device, console_output=False)
-            
-            # Log accuracies
+
             log_accuracy_metrics(epoch, train_accuracy, val_accuracy)
-            
-            # Save checkpoint
+
             checkpoint_dir = os.path.join(args.output_dir, f"checkpoint_epoch_{epoch+1}")
             os.makedirs(checkpoint_dir, exist_ok=True)
             checkpoint = {
@@ -207,14 +188,11 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs,
     loss_plotter.stop_plotting()
     accuracy_plotter.stop_plotting()
 
-    # Restore best model state
-    # At end of training, always restore best model if one was saved
     if best_model_state:
         print(f"\nTraining complete. Restoring best model from epoch {best_model_state['epoch']} with validation loss {best_val_loss:.4f}")
         model.load_state_dict(best_model_state['model_state_dict'])
 
-        best_epoch = best_model_state['epoch'] + 1  # Add 1 to match displayed epoch numbers
-        # Save best model info
+        best_epoch = best_model_state['epoch'] + 1  # epoch is 0-indexed; +1 to match the printed epoch numbers
         best_model_info = {
             "best_epoch": best_epoch,
             "total_epochs": epochs,
@@ -249,7 +227,6 @@ if __name__ == "__main__":
     global args
     args = parser.parse_args()
 
-    # Check if the output directory exists
     if os.path.exists(args.output_dir):
         print(f"Error: Output directory '{args.output_dir}' already exists. Please remove it or choose a different name.")
         exit()

@@ -225,8 +225,6 @@ class CaptionBuilder(ParentBuilder):
         self.bottom_scrollbar.pack(fill=tk.X, pady=(0, 10))
 
 
-        # Game selection
-        # Game selection
         self.game_var = tk.StringVar(value=game_selected if game_selected else "Mario Maker (MM)")
         
         self.game_label = ttk.Label(self.caption_frame, text="Select Game:", style="TLabel")
@@ -239,9 +237,7 @@ class CaptionBuilder(ParentBuilder):
     def probe_absence_caption_support(self):
         """Test if the loaded model supports absence captions by running a quick, hidden generation."""
         try:
-            # Use a minimal absence caption prompt
             test_prompt = append_absence_captions("", TOPIC_KEYWORDS)
-            # Minimal params for a fast test
             param_values = {
                 "num_inference_steps": 1,
                 "guidance_scale": 1.0,
@@ -251,12 +247,9 @@ class CaptionBuilder(ParentBuilder):
                 "caption": test_prompt
             }
             generator = torch.Generator(self.device).manual_seed(1)
-            # Try generating (do not display or store result)
             _ = self.pipe(generator=generator, **param_values)
-            # If no exception, enable the checkbox
             self.automatic_absence_caption_checkbox.config(state=tk.NORMAL)
-        except Exception as e:
-            # If any error, disable the checkbox
+        except Exception:
             self.automatic_absence_caption_checkbox.config(state=tk.DISABLED)
             self.automatic_absence_caption.set(False)
 
@@ -264,7 +257,8 @@ class CaptionBuilder(ParentBuilder):
     def probe_diffusion_args_support(self):
         """Test if the loaded model can use our diffusion-specific args, greys them out if it can't"""
         if isinstance(self.pipe, FDMPipeline):
-            #We're using an FDM model here, so we remove support for negative prompts, guidance scale, inference steps, and control over the width/height of the output.
+            # FDM models don't support negative prompts, guidance scale, inference
+            # steps, or output width/height control.
             self.negative_prompt_entry.delete("1.0", tk.END)
             self.negative_prompt_entry.config(state=tk.DISABLED)
 
@@ -272,24 +266,15 @@ class CaptionBuilder(ParentBuilder):
             self.automatic_negative_caption_checkbox.config(state=tk.DISABLED)
 
             self.guidance_entry.config(state=tk.DISABLED)
-
             self.num_steps_entry.config(state=tk.DISABLED)
-
             self.width_entry.config(state=tk.DISABLED)
-
             self.height_entry.config(state=tk.DISABLED)
         else:
-            #If this isn't the case, return everything back to normal
             self.negative_prompt_entry.config(state=tk.NORMAL)
-
             self.automatic_negative_caption_checkbox.config(state=tk.NORMAL)
-
             self.guidance_entry.config(state=tk.NORMAL)
-
             self.num_steps_entry.config(state=tk.NORMAL)
-
             self.width_entry.config(state=tk.NORMAL)
-
             self.height_entry.config(state=tk.NORMAL)
 
 
@@ -311,10 +296,8 @@ class CaptionBuilder(ParentBuilder):
 
     def save_image_as(self, pil_image, image_index):
         """Save the PIL image to a file chosen by the user"""
-        # Create default filename
         default_filename = f"generated_level_{image_index + 1}.png"
-        
-        # Open save dialog
+
         file_path = filedialog.asksaveasfilename(
             defaultextension=".png",
             filetypes=[
@@ -323,12 +306,11 @@ class CaptionBuilder(ParentBuilder):
                 ("All files", "*.*")
             ],
             title="Save Image As",
-            initialfile=default_filename  # Changed from initialfilename to initialfile
+            initialfile=default_filename
         )
-        
+
         if file_path:
             try:
-                # Save the image
                 pil_image.save(file_path)
                 messagebox.showinfo("Success", f"Image saved successfully to:\n{file_path}")
             except Exception as e:
@@ -552,7 +534,6 @@ class CaptionBuilder(ParentBuilder):
 
             print(f"Image {i + 1} dimensions: width={img_tk.width()}, height={img_tk.height()}")
 
-            # Check if the image width exceeds the frame width and scale it down if necessary
             if img_tk.width() > frame_width:
                 scale_factor = frame_width / img_tk.width()
                 new_width = frame_width
@@ -564,27 +545,19 @@ class CaptionBuilder(ParentBuilder):
             label.image = img_tk
             label.pack()
 
-            # Create context menu for this image
             context_menu = self.create_image_context_menu(pil_img, i)
 
-            # Bind right-click to show context menu
             label.bind("<Button-3>", lambda event, menu=context_menu: self.show_context_menu(event, menu))
-            # For macOS compatibility, also bind Control+Click
-            label.bind("<Control-Button-1>", lambda event, menu=context_menu: self.show_context_menu(event, menu))
+            label.bind("<Control-Button-1>", lambda event, menu=context_menu: self.show_context_menu(event, menu))  # macOS
 
-            # Create a Text widget to allow colored text
             caption_text = tk.Text(img_frame, wrap=tk.WORD, width=40, height=5, state=tk.DISABLED)
             caption_text.pack(pady=(5, 10))
 
-            # Enable editing temporarily to insert text
             caption_text.config(state=tk.NORMAL)
-
-            # Define tags for different colors
             caption_text.tag_configure("green", foreground="green")
-            caption_text.tag_configure("yellow", foreground="#CCCC00")  # Darker yellow
+            caption_text.tag_configure("yellow", foreground="#CCCC00")
             caption_text.tag_configure("red", foreground="red")
 
-            # Insert text with tags
             for phrase in exact_matches:
                 caption_text.insert(tk.END, phrase + ". ", "green")
             for phrase in partial_matches:
@@ -592,17 +565,9 @@ class CaptionBuilder(ParentBuilder):
             for phrase in excess_phrases:
                 caption_text.insert(tk.END, phrase + ". ", "red")
 
-            # Disable editing again
             caption_text.config(state=tk.DISABLED)
 
-            # And score
-            #score_label = ttk.Label(img_frame, text=f"Comparison Score: {compare_score}", wraplength=300)
-            #score_label.pack(pady=(5, 10))  # Add padding: 5px top, 10px bottom
-
-            # Check if the scene is wider than standard number of tiles and process segments if necessary
             avg_segment_score = None
-
-            # Update the score label text
             if avg_segment_score is not None:
                 score_label_text = f"""Comparison Score: {compare_score}
 Average Segment Score: {avg_segment_score}"""
@@ -610,7 +575,7 @@ Average Segment Score: {avg_segment_score}"""
                 score_label_text = f"Comparison Score: {compare_score}"
 
             score_label = ttk.Label(img_frame, text=score_label_text, wraplength=300)
-            score_label.pack(pady=(5, 10))  # Add padding: 5px top, 10px bottom
+            score_label.pack(pady=(5, 10))
 
             self.generated_widget_refs.append({
                 "image_label": label,
@@ -618,34 +583,30 @@ Average Segment Score: {avg_segment_score}"""
                 "score_label": score_label,
             })
 
-            # Create a frame for buttons
             button_frame = ttk.Frame(img_frame)
             button_frame.pack(pady=5)
-    
+
             is_mario = game_selected == "Mario Maker (MM)"
 
-            # Add Play button
             play_button = ttk.Button(
-                button_frame, 
-                text="Play", 
+                button_frame,
+                text="Play",
                 command=lambda idx=i: self.play_level(idx),
                 style="TButton",
-                state=tk.NORMAL if is_mario else tk.DISABLED 
+                state=tk.NORMAL if is_mario else tk.DISABLED
 
             )
             play_button.pack(side=tk.LEFT, padx=5)
-    
-            # Add Use A* button
+
             astar_button = ttk.Button(
-                button_frame, 
-                text="Use A*", 
+                button_frame,
+                text="Use A*",
                 command=lambda idx=i: self.use_astar(idx),
                 style="TButton",
                 state=tk.NORMAL if is_mario else tk.DISABLED
             )
             astar_button.pack(side=tk.LEFT, padx=5)
 
-            # Add "Add To Level" button
             add_button = ttk.Button(
                 button_frame,
                 text="Add To Level",
@@ -662,26 +623,22 @@ Average Segment Score: {avg_segment_score}"""
             )
             edit_button.pack(side=tk.LEFT, padx=5)
 
-            del images, sample_tensor, sample_indices, scene  # Delete unused tensors
+            del images, sample_tensor, sample_indices, scene
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()  # Clear the cache
-            gc.collect()  # Force garbage collection
+                torch.cuda.empty_cache()
+            gc.collect()
 
         print("Image generation completed.")
-        #print(self.current_levels)
 
     def add_to_composed_level(self, idx):
-        # Store the actual scene
         scene = self.generated_scenes[idx]
         self.composed_scenes.append(scene)
 
-        # Create and store the thumbnail
         img = self.generated_images[idx].copy()
         img.thumbnail((64, 64))
         photo = ImageTk.PhotoImage(img)
-        self.composed_thumbnails.append(photo)  # Prevent GC
+        self.composed_thumbnails.append(photo)  # keep a reference so PhotoImage isn't GC'd
 
-        # Create a clickable label for the thumbnail
         label = ttk.Label(self.bottom_frame, image=photo, borderwidth=2, relief="flat")
         label.pack(side=tk.LEFT, padx=2)
         self.composed_thumbnail_labels.append(label)
