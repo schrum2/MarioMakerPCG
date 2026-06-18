@@ -1,3 +1,0 @@
-
-extract_levels_to_ascii.bat mario 3000 marioLevels
-run_full_pipeline.bat marioLevels
