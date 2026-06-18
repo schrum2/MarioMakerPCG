@@ -844,7 +844,12 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                 f.write(ascii_grid)
 
         if name in existing:
-            results.append(existing[name])
+            cached = existing[name]
+            # Older outputs may only have the "captions" list; backfill the singular
+            # "caption" so resumed runs don't reintroduce the missing-key shape.
+            if "caption" not in cached and cached.get("captions"):
+                cached["caption"] = cached["captions"][0]
+            results.append(cached)
             skipped += 1
             continue
 
@@ -908,7 +913,10 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         if deterministic:
             captions.append(deterministic)
 
-        entry = {"name": name, "scene": scene, "captions": captions}
+        # Downstream tools (tokenizer.py, level_dataset.py, evaluate_tile_distribution.py)
+        # all read a singular "caption" string. Keep the full "captions" list too so the
+        # multi-caption path stays available, but always expose the first as "caption".
+        entry = {"name": name, "scene": scene, "caption": captions[0], "captions": captions}
         if deterministic:
             entry["prompt"] = deterministic
         results.append(entry)
