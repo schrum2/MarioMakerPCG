@@ -536,13 +536,13 @@ def call_ollama(prompt, model, url, timeout, retries):
                 ) from e
 
 
-def find_non_ascii_char(captions):
-    """Return the first non-ASCII character found across all captions, or None."""
-    for caption in captions:
-        for ch in caption:
-            if ord(ch) > 127:
-                return ch
-    return None
+def find_non_ascii_chars(captions):
+    """Return a sorted list of all distinct non-ASCII characters across captions.
+
+    Returns an empty list if every character is plain ASCII (code points 0-127).
+    """
+    bad = {ch for caption in captions for ch in caption if ord(ch) > 127}
+    return sorted(bad)
 
 
 def parse_captions(raw_response):
@@ -669,6 +669,9 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
     generated = 0
     skipped = 0
     errors = 0
+    all_bad_chars = set()
+    total_reprompts = 0
+    reprompted_scenes = []
 
     for i, item in enumerate(dataset):
         scene = item["scene"] if isinstance(item, dict) else item
@@ -708,16 +711,21 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                     raw = call_ollama(active_prompt, model, url, timeout, retries)
                 captions = parse_captions(raw)
 
-                bad_char = find_non_ascii_char(captions) if captions else None
-                if not bad_char:
+                bad_chars = find_non_ascii_chars(captions) if captions else []
+                if not bad_chars:
                     break
+                all_bad_chars.update(bad_chars)
+                if name not in reprompted_scenes:
+                    reprompted_scenes.append(name)
+                total_reprompts += 1
+                char_list = ", ".join(f"{ch!r} (U+{ord(ch):04X})" for ch in bad_chars)
                 print(
                     f"\n  [REPROMPT {attempt + 1}/{max_reprompts - 1}] "
-                    f"non-English character {bad_char!r} in caption, retrying...",
+                    f"non-English character(s) {char_list} in caption, retrying...",
                     end=" ", flush=True,
                 )
                 active_prompt = prompt + (
-                    f"\n\nCRITICAL: Your previous response contained the non-ASCII character {bad_char!r} (U+{ord(bad_char):04X}). "
+                    f"\n\nCRITICAL: Your previous response contained these forbidden non-ASCII characters: {char_list}. "
                     f"This is strictly forbidden. Use only plain ASCII characters (code points 0-127). "
                     f"For example, use a hyphen-minus '-' instead of an em dash '\u2014', "
                     f"and straight quotes instead of curly quotes. Output the JSON array now with only ASCII characters."
@@ -755,6 +763,19 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         f"\nDone. Generated {generated} new captions, "
         f"{skipped} resumed, {errors} errors -> {output_path}"
     )
+
+    print(f"\nReprompts: {total_reprompts} total across {len(reprompted_scenes)} scene(s).")
+    if all_bad_chars:
+        char_list = ", ".join(
+            f"{ch!r} (U+{ord(ch):04X})" for ch in sorted(all_bad_chars)
+        )
+        print(f"Bad characters encountered: {char_list}")
+    else:
+        print("Bad characters encountered: none")
+    if reprompted_scenes:
+        print("Scenes that needed a reprompt:")
+        for scene_name in reprompted_scenes:
+            print(f"  - {scene_name}")
 
 
 def main():
