@@ -558,6 +558,85 @@ def call_claude(prompt, model, api_key, max_tokens, timeout, retries):
                 ) from e
 
 
+def call_openai(prompt, model, api_key, max_tokens, timeout, retries):
+    payload = json.dumps({
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": 0,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode("utf-8")
+
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                choices = result.get("choices", [])
+                if not choices:
+                    return ""
+                return (choices[0].get("message", {}).get("content") or "").strip()
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if attempt < retries - 1:
+                wait = min(2 ** attempt * 5, 60)
+                print(f"  [RETRY {attempt + 1}/{retries - 1}] {e} (waiting {wait}s)")
+                time.sleep(wait)
+            else:
+                raise RuntimeError(
+                    f"OpenAI request failed after {retries} attempts: {e}"
+                ) from e
+
+
+def call_gemini(prompt, model, api_key, max_tokens, timeout, retries):
+    payload = json.dumps({
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": max_tokens,
+        },
+    }).encode("utf-8")
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:generateContent"
+    )
+
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": api_key,
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                candidates = result.get("candidates", [])
+                if not candidates:
+                    return ""
+                parts = candidates[0].get("content", {}).get("parts", [])
+                return "".join(p.get("text", "") for p in parts).strip()
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if attempt < retries - 1:
+                wait = min(2 ** attempt * 5, 60)
+                print(f"  [RETRY {attempt + 1}/{retries - 1}] {e} (waiting {wait}s)")
+                time.sleep(wait)
+            else:
+                raise RuntimeError(
+                    f"Gemini request failed after {retries} attempts: {e}"
+                ) from e
+
+
 def call_ollama(prompt, model, url, timeout, retries):
     payload = json.dumps({
         "model": model,
@@ -789,6 +868,10 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
                 if backend == "claude":
                     raw = call_claude(active_prompt, model, api_key, max_tokens, timeout, retries)
+                elif backend == "openai":
+                    raw = call_openai(active_prompt, model, api_key, max_tokens, timeout, retries)
+                elif backend == "gemini":
+                    raw = call_gemini(active_prompt, model, api_key, max_tokens, timeout, retries)
                 else:
                     raw = call_ollama(active_prompt, model, url, timeout, retries)
                 captions = parse_captions(raw)
@@ -810,9 +893,6 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
             print(f"ERROR: {e}")
             captions = []
 
-        # If we exhausted reprompts (or hit a hard request failure) without any
-        # usable captions, don't crash and don't add this level to the output
-        # database -- just drop it and move on to the next one.
         if not captions:
             print("ERROR: no usable captions after reprompts; dropping level from output")
             errors += 1
@@ -884,7 +964,7 @@ def main():
     parser.add_argument("--output", required=True, help="Output captioned JSON.")
     parser.add_argument(
         "--backend",
-        choices=["ollama", "claude"],
+        choices=["ollama", "claude", "openai", "gemini"],
         default="ollama",
         help="LLM backend to use. Default: ollama",
     )
@@ -892,15 +972,18 @@ def main():
         "--api-key-file",
         default=None,
         help=(
-            "Path to a .txtg file whose first line is the full Claude API key. "
-            "Required when --backend claude."
+            "Path to a .txt file whose first line is the full API key. "
+            "Required when --backend is claude, openai, or gemini."
         ),
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
         default=900,
-        help="Max output tokens for the Claude backend (5 captions need more room than 1). Default: 900",
+        help=(
+            "Max output tokens for the claude/openai/gemini backends "
+            "(5 captions need more room than 1). Default: 900"
+        ),
     )
     parser.add_argument(
         "--num-captions",
@@ -918,7 +1001,9 @@ def main():
         help=(
             "Model name. For --backend ollama, default: qwen2.5:14b "
             "(pull with: ollama pull qwen2.5:14b; smaller fallback: qwen2.5:7b or llama3.1:8b). "
-            "For --backend claude, default: claude-sonnet-4-6."
+            "For --backend claude, default: claude-sonnet-4-6. "
+            "For --backend openai, default: gpt-4o. "
+            "For --backend gemini, default: gemini-2.5-flash."
         ),
     )
     parser.add_argument(
@@ -988,9 +1073,12 @@ def main():
         sys.exit(1)
 
     api_key = None
-    if args.backend == "claude":
+    if args.backend in ("claude", "openai", "gemini"):
         if not args.api_key_file or not os.path.isfile(args.api_key_file):
-            print("Error: --api-key-file (a .txtg file with the API key on its first line) is required for --backend claude")
+            print(
+                f"Error: --api-key-file (a .txt file with the API key on its first line) "
+                f"is required for --backend {args.backend}"
+            )
             sys.exit(1)
         api_key = load_api_key(args.api_key_file)
 
@@ -998,7 +1086,13 @@ def main():
         print("Error: --num-captions must be at least 1")
         sys.exit(1)
 
-    model = args.model or ("claude-sonnet-4-6" if args.backend == "claude" else "qwen2.5:14b")
+    default_models = {
+        "claude": "claude-sonnet-4-6",
+        "openai": "gpt-4o",
+        "gemini": "gemini-2.5-flash",
+        "ollama": "qwen2.5:14b",
+    }
+    model = args.model or default_models[args.backend]
 
     generate_captions(
         args.dataset,
