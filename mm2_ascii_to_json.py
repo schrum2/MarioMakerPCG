@@ -171,6 +171,7 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
     ground = []
     objects = []
     unknown_glyphs = {}
+    goal_cells = []
 
     for row_game, line in enumerate(rows):
         for col, ch in enumerate(line):
@@ -186,7 +187,34 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
             if name is None or name not in NAME_TO_ID:
                 unknown_glyphs[ch] = unknown_glyphs.get(ch, 0) + 1
                 continue
+            if name == "Goal":
+                # The goal/flagpole is LEVEL METADATA in this schema, not an
+                # objects[] entry: it lives in the header's goal_x/goal_y and is
+                # consumed from there by json_to_swe (build_metadata -> S1) and
+                # json_to_bcd (pack_level_header). The forward script paints it
+                # as a vertical column of 'G' glyphs -- mm2_json_to_ascii's
+                # normalize_level injects an h=11 pole anchored at goal_x/goal_y.
+                # So collect those cells and recover the pole's base below,
+                # instead of emitting id=27 objects: json_to_swe drops id=27
+                # outright (OBJ_ID_MAP[27] = None), which is exactly the "the end
+                # doesn't make it into the .swe" symptom.
+                goal_cells.append((col, row_game))
+                continue
             objects.append(make_object(name, col, row_game))
+
+    # Recover goal_x/goal_y from the painted flagpole. goal_x is stored in
+    # TENTHS of a tile (both build_metadata in json_to_swe and normalize_level
+    # in mm2_json_to_ascii compute goal_col = goal_x // 10); goal_y is the
+    # pole's base row in whole tiles from the bottom. Goal is left-anchored and
+    # its height grows upward, so the anchor is the left-most, bottom-most cell
+    # -- take the min column / min row. With no 'G' glyphs the level has no goal
+    # and both stay 0.
+    if goal_cells:
+        goal_col = min(c for c, _ in goal_cells)
+        goal_row = min(r for _, r in goal_cells)
+    else:
+        goal_col = 0
+        goal_row = 0
 
     stem = Path(source_file).stem if source_file else "level"
 
@@ -208,8 +236,8 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
         "game_version_raw": 0,
         "timer": timer,
         "start_y": 0,
-        "goal_x": 0,
-        "goal_y": 0,
+        "goal_x": goal_col * 10,
+        "goal_y": goal_row,
         "clear_condition_type": "None",
         "clear_condition_type_raw": 0,
         "clear_condition_magnitude": 0,
