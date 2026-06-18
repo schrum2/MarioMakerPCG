@@ -22,9 +22,9 @@ if "%TYPE%"=="" set TYPE=regular
 if "%GAME%"=="" set GAME=MM
 if "%SEED%"=="" set SEED=0
 
-set TILESET=smb.json
-set NUM_TILES=13
-set EVAL_TILESET=mm2_tileset_full.json
+set TILESET=extended_tiles.json
+set NUM_TILES=19
+set EVAL_TILESET=mm2_tileset_we.json
 set CAPTION_ARGS=
 if /I "%GAME%"=="MM" (
     set TILESET=mm2_tileset_we.json

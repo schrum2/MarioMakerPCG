@@ -54,8 +54,11 @@ class Tokenizer:
 
     def encode(self, text):
         tokens = self.tokenize(text)
-        #unk_id = self.token_to_id["[UNK]"]
-        return [self.token_to_id.get(tok) for tok in tokens]
+        # Map out-of-vocabulary tokens (e.g. words that appear only in the
+        # validation/test captions) to [UNK] instead of None, which would
+        # otherwise break torch.tensor(..., dtype=torch.long) downstream.
+        unk_id = self.token_to_id["[UNK]"]
+        return [self.token_to_id.get(tok, unk_id) for tok in tokens]
 
     def encode_batch(self, texts, pad_to_length=None):
         """

@@ -913,10 +913,6 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         if deterministic:
             captions.append(deterministic)
 
-        # Downstream tools (tokenizer.py, level_dataset.py, evaluate_tile_distribution.py)
-        # all read a singular "caption" string. Keep the full "captions" list too so the
-        # multi-caption path stays available, but always expose the first as "caption".
-        entry = {"name": name, "scene": scene, "caption": captions[0], "captions": captions}
         if deterministic:
             entry["prompt"] = deterministic
         results.append(entry)
