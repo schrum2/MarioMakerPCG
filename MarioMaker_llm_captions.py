@@ -913,6 +913,12 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         if deterministic:
             captions.append(deterministic)
 
+        entry = {
+            "name": name,
+            "scene": scene,
+            "caption": captions[0] if captions else "",
+            "captions": captions,
+        }
         if deterministic:
             entry["prompt"] = deterministic
         results.append(entry)
