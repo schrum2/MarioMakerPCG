@@ -173,19 +173,53 @@ OBJ_META = {
 GROUND_COLOR = "#8B6914"
 GROUND_CHAR  = "#"
 
-# ASCII export replacements: MM2 objects that convert to a different SWE object.
-# Mirrors the approximations in json_to_swe.py OBJ_SWE_IDS.
+# ---------------------------------------------------------------------------
+# ASCII export handling for objects whose OBJ_META glyph is NOT a real tile in
+# mm2_tileset_we.json (the canonical training tileset). Without this, those
+# glyphs silently collapse to the dataset's "unknown" tile, polluting training.
+# Two mechanisms, both keyed by the decoded object name:
+#
+#   ASCII_REPLACEMENTS   – approximate the object with a valid tileset glyph
+#   ASCII_DROP           – skip the object entirely (write nothing)
+#
+# 3D-World-exclusive objects (and levels containing objects with no static-tile
+# representation) are already filtered upstream in extract_mm2_bcd.py, so they
+# are NOT handled here — only non-3DW approximations and editor/decorative
+# markers remain. (See json_to_swe.py OBJ_ID_MAP for the SWE-side analogs.)
+# ---------------------------------------------------------------------------
 ASCII_REPLACEMENTS = {
-    "Spike Top":           "s",  # → Spiny
-    "Fish Bone":           "~",  # → Cheep Cheep
-    "Lakitu's Cloud":      ";",  # → Clown Car
-    "Jumping Machine":     "J",  # → Spring
-    "Mushroom Trampoline": "J",  # → Spring
-    "ON/OFF Trampoline":   "J",  # → Spring
-    "Seesaw":              "-",  # → Lift (no seesaw equivalent in SMMWE)
-    "Muncher":             "^",  # → Spikes (easy replacement since no wearing muncher on head in SMMWE)
-    "Arrow":               "",  # → no ASCII equivalent; purely decorative in SMMWE
-    
+    "Spike Top":               "s",  # → Spiny
+    "Fish Bone":               "~",  # → Cheep Cheep
+    "Lakitu's Cloud":          ";",  # → Clown Car
+    "Jumping Machine":         "J",  # → Spring
+    "Mushroom Trampoline":     "J",  # → Spring
+    "ON/OFF Trampoline":       "J",  # → Spring
+    "Seesaw":                  "-",  # → Lift (no seesaw equivalent in SMMWE)
+    "Muncher":                 "^",  # → Spikes (no wearing muncher on head in SMMWE)
+    "P Block":                 "O",  # → ON/OFF block (closest togglable solid)
+    "Spike Block":             "^",  # → Spikes
+    "Goal Ground":             "#",  # → Ground
+    "Starting Brick":          "#",  # → Ground (editor start marker)
+    "Pokey":                   "s",  # → Spiny (nearest ground enemy)
+    "Mechakoopa":              "K",  # → Koopa
+    "Lemmy":                   "x",  # → Bowser Jr.
+    "Morton":                  "x",  # → Bowser Jr.
+    "Larry":                   "x",  # → Bowser Jr.
+    "Wendy":                   "x",  # → Bowser Jr.
+    "Iggy":                    "x",  # → Bowser Jr.
+    "Roy":                     "x",  # → Bowser Jr.
+    "Ludwig":                  "x",  # → Bowser Jr.
+    "Red Coin":                "c",  # → Coin
+    "Half-Collision Platform": "k",  # → Semisolid platform
+    "Spike Ball":              "^",  # → Spikes
+    "Icicle":                  "^",  # → Spikes (falling hazard)
+}
+
+# Editor/decorative markers with no tileset glyph: dropped from the grid.
+ASCII_DROP = {
+    "Castle Bridge",   # the goal-castle bridge is generated automatically
+    "Key", "Arrow", "Water Marker", "Reel Camera", "Sound Effect",
+    "Player", "Track", "Starting Arrow",
 }
 
 CAT_COLORS = {
@@ -447,6 +481,12 @@ def build_ascii_grid(level):
     for pass_n in range(2):
         for obj in objects:
             obj_name = obj.get("name","_unknown")
+
+            # Objects with no tileset glyph are dropped entirely (writing an
+            # empty string into cells would misalign the row on "".join()).
+            if obj_name in ASCII_DROP:
+                continue
+
             is_bg = obj_name in BG_TYPES
             if pass_n == 0 and not is_bg:
                 continue
