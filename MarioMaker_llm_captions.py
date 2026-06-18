@@ -195,7 +195,7 @@ MM2_CHAR_NAMES = {
 
 TERRAIN_CHARS_MM2 = frozenset({"#", "H", "B", "S", "I", "C", "/", "\\"})
 TERRAIN_CHARS_EXT = frozenset({"#", "B", "N", "S"})
-TERRAIN_CHARS_WE = frozenset({"#", "B", "N", "?", "H", "I", "p", "O"})
+TERRAIN_CHARS_WE = frozenset({"#", "B", "N", "?", "H", "I", "O"})
 
 # ── Prompt template ───────────────────────────────────────────────────────────
 

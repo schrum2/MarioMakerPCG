@@ -305,4 +305,4 @@ if __name__ == "__main__":
     main()
 
 #num_tiles = 138 for mm2_tileset_full
-#num_tiles = 74 for mm2_tileset_we
+#num_tiles = 69 for mm2_tileset_we

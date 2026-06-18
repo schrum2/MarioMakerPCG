@@ -22,7 +22,6 @@
         "h" : ["passable", "hidden block"],
         "d" : ["passable", "falling", "donut block"],
         "I" : ["solid", "slippery", "ice block"],
-        "p" : ["solid", "togglable", "p block"],
         "O" : ["solid", "togglable", "on off block"],
         "." : ["passable", "togglable", "dotted line block"],
 
@@ -44,11 +43,9 @@
         "~" : ["enemy", "damaging", "hazard", "moving", "cheep cheep"],
         "q" : ["enemy", "damaging", "hazard", "moving", "blooper"],
         "w" : ["enemy", "damaging", "hazard", "moving", "wiggler"],
-        "Y" : ["enemy", "damaging", "hazard", "moving", "pokey"],
         "&" : ["enemy", "damaging", "hazard", "moving", "lava bubble"],
         "r" : ["enemy", "damaging", "hazard", "moving", "rocky wrench"],
         "n" : ["enemy", "damaging", "hazard", "moving", "monty mole"],
-        "R" : ["enemy", "damaging", "hazard", "moving", "mechakoopa"],
         "!" : ["enemy", "damaging", "hazard", "moving", "boss", "boom boom"],
         "9" : ["enemy", "damaging", "hazard", "moving", "dry bones"],
         "A" : ["enemy", "damaging", "hazard", "moving", "angry sun"],
@@ -66,12 +63,10 @@
         "-" : ["passable", "platform", "moving", "lift"],
         "F" : ["solid", "platform", "moving", "lava lift"],
         "j" : ["passable", "interactive", "swinging claw"],
-        "a" : ["passable", "platform", "semisolid", "half collision"],
 
         "e" : ["damaging", "hazard", "fire bar"],
         "%" : ["damaging", "hazard", "moving", "saw"],
         "l" : ["damaging", "hazard", "burner"],
-        "v" : ["passable", "damaging", "hazard", "moving", "spike ball"],
         "0" : ["solid", "damaging", "hazard", "moving", "skewer"],
         "8" : ["passable", "damaging", "hazard", "moving", "twister"],
 
