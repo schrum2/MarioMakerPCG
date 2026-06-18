@@ -123,7 +123,7 @@ def parse_args():
     parser.add_argument("--config", type=str, default=None, help="Path to JSON config file with training parameters.")
 
     # For caption score calculation
-    parser.add_argument("--tileset", default=common_settings.MARIO_TILESET, help="Descriptions of individual tile types")
+    parser.add_argument("--tileset", default=None, help="Descriptions of individual tile types (overrides game default)")
     parser.add_argument("--describe_absence", action="store_true", default=False, help="Indicate when there are no occurrences of an item or structure")
     parser.add_argument("--plot_validation_caption_score", action="store_true", default=False, help="Whether validation caption score should be plotted")
 
@@ -287,7 +287,8 @@ def main():
         raise ValueError(f"Unknown game: {args.game}")
     if args.num_tiles is None:
         args.num_tiles = game_tile_counts[args.game]
-    args.tileset = game_tilesets[args.game]
+    if args.tileset is None:
+        args.tileset = game_tilesets[args.game]
 
     # Check if config file is provided before training loop begins
     if hasattr(args, 'config') and args.config:

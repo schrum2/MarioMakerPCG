@@ -152,12 +152,9 @@ def parse_source_file(file_path):
     return levels
 
 def check_unmapped_chars(rows, tile_to_id, extra_tile):
-    """Count how many characters in rows aren't real keys in the tileset.
-
-    A high ratio almost always means the wrong --tileset was passed for this
-    input (e.g. an MM2-style ascii file run against smb.json), since the
-    converter otherwise silently collapses every unrecognized tile into the
-    same extra/unknown id.
+    """
+    Count how many characters in rows aren't real keys in the tileset.
+    A high ratio almost always means the wrong --tileset was passed for this input
     """
     total = 0
     unmapped = 0

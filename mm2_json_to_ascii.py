@@ -182,6 +182,10 @@ ASCII_REPLACEMENTS = {
     "Jumping Machine":     "J",  # → Spring
     "Mushroom Trampoline": "J",  # → Spring
     "ON/OFF Trampoline":   "J",  # → Spring
+    "Seesaw":              "-",  # → Lift (no seesaw equivalent in SMMWE)
+    "Muncher":             "^",  # → Spikes (easy replacement since no wearing muncher on head in SMMWE)
+    "Arrow":               "",  # → no ASCII equivalent; purely decorative in SMMWE
+    
 }
 
 CAT_COLORS = {
