@@ -827,7 +827,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
     all_bad_chars = set()
     total_reprompts = 0
     reprompted_scenes = {}  # scene name -> number of reprompts it needed
-    last_full_prompt = None  # most recent fully-rendered prompt incl. the accumulated ban clause
+    last_full_prompt = None  # most recent fully-rendered prompt (dict + metadata + grid substituted in)
 
     for i, item in enumerate(dataset):
         scene = item["scene"] if isinstance(item, dict) else item
@@ -868,8 +868,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                 # Every attempt -- including the first attempt of a brand-new scene --
                 # carries the running ban list of every bad char seen so far this run.
                 active_prompt = prompt + build_avoidance_clause(all_bad_chars)
-                if all_bad_chars:
-                    last_full_prompt = active_prompt
+                last_full_prompt = active_prompt
 
                 if backend == "claude":
                     raw = call_claude(active_prompt, model, api_key, max_tokens, timeout, retries)
@@ -949,11 +948,11 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
     print("\n" + "=" * 70)
     if last_full_prompt is not None:
-        print("Final full prompt sent (base prompt + accumulated character ban clause):")
+        print("Final full prompt sent (fully rendered: dictionary, metadata, and grid filled in):")
         print("=" * 70)
         print(last_full_prompt)
     else:
-        print("Full prompt template used (no bad characters occurred this run):")
+        print("Full prompt template used (no scenes were sent to the LLM this run):")
         print("=" * 70)
         print(prompt_template)
 
