@@ -199,7 +199,7 @@ TERRAIN_CHARS_WE = frozenset({"#", "B", "N", "?", "H", "I", "p", "O"})
 
 # ── Prompt template ───────────────────────────────────────────────────────────
 
-PROMPT_TEMPLATE = """\
+_PROMPT_INTRO = """\
 You are an expert Mario Maker 2 level describer.
 
 You will receive three inputs:
@@ -240,35 +240,90 @@ WHAT TO AVOID
 - Do not describe exact coordinates or tile-by-tile detail.
 - Do not mention features that are absent.
 
-YOUR TASK
+"""
 
-Write 5 different captions for this same level. All 5 must be accurate, but they must vary WIDELY from each other in length, level of detail, and register, so that together they cover the range of ways a human might describe this level:
+# The task and output sections of the prompt depend on how many captions we
+# want, so they are assembled per-run by build_prompt_template(). Everything
+# after the WHAT TO AVOID section is appended dynamically below.
 
-- one or two should be terse, tag-like phrases separated by periods (similar to keyword lists), covering only the 2-4 most prominent features
-- one or two should be a plain casual sentence or two, in normal prose, that a person might type quickly
-- one or two should be a more detailed, descriptive paragraph that walks through the level's layout and notable features in order
-
-Across the 5 captions, vary which features get emphasized — they don't all need to mention everything, but none should contradict another or invent something not present. Keep all 5 lowercase except for proper nouns inherent to object names if any.
-
-OUTPUT FORMAT
-
-Output a single JSON array of exactly 5 strings, and nothing else — no markdown fences, no commentary, no keys other than the array itself.
-
-Example shape (do not reuse this content, it is only to show the format):
-["ascending staircase. two goombas. one pipe right.", "a short level with a rising staircase, a couple of goombas, and a pipe near the end.", "the level begins on flat ground before climbing a set of steps toward the right side. two goombas patrol the lower section, and a pipe sits near the far right edge of the level.", "...", "..."]
-
-Symbol dictionary:
-{dict_string}
+# Sample captions used only to show the model the JSON array shape. They are
+# sliced to the requested caption count when building the example.
+_EXAMPLE_CAPTIONS = [
+    "ascending staircase. two goombas. one pipe right.",
+    "a short level with a rising staircase, a couple of goombas, and a pipe near the end.",
+    "the level begins on flat ground before climbing a set of steps toward the right side. two goombas patrol the lower section, and a pipe sits near the far right edge of the level.",
+    "flat ground, a pipe, and a couple of enemies.",
+    "rising terrain on the right with goombas below and a pipe at the far end.",
+]
 
 
-Metadata:
-{metadata}
+def _build_task_section(num_captions):
+    if num_captions == 1:
+        return (
+            "YOUR TASK\n\n"
+            "Write 1 caption for this level. It must be accurate and read like a natural human "
+            "description. Make it a detailed, descriptive paragraph that walks through the level's "
+            "layout and notable features in order. Keep it lowercase except for proper nouns "
+            "inherent to object names if any."
+        )
+    return (
+        "YOUR TASK\n\n"
+        f"Write {num_captions} different captions for this same level. All {num_captions} must be "
+        "accurate, but they must vary WIDELY from each other in length, level of detail, and "
+        "register, so that together they cover the range of ways a human might describe this level:\n\n"
+        "- one or two should be terse, tag-like phrases separated by periods (similar to keyword "
+        "lists), covering only the 2-4 most prominent features\n"
+        "- one or two should be a plain casual sentence or two, in normal prose, that a person "
+        "might type quickly\n"
+        "- one or two should be a more detailed, descriptive paragraph that walks through the "
+        "level's layout and notable features in order\n\n"
+        f"Across the {num_captions} captions, vary which features get emphasized — they don't all "
+        "need to mention everything, but none should contradict another or invent something not "
+        f"present. Keep all {num_captions} lowercase except for proper nouns inherent to object "
+        "names if any."
+    )
 
 
-{grid_label}:
-{ascii_grid}
+def _build_output_section(num_captions):
+    if num_captions == 1:
+        # The single-caption task asks for the detailed paragraph style, so show
+        # that example rather than the terse tag-like first entry.
+        entries = [_EXAMPLE_CAPTIONS[2]]
+    else:
+        n_example = min(num_captions, len(_EXAMPLE_CAPTIONS))
+        entries = list(_EXAMPLE_CAPTIONS[:n_example])
+        if num_captions > len(_EXAMPLE_CAPTIONS):
+            entries += ["..."] * (num_captions - len(_EXAMPLE_CAPTIONS))
+    example = json.dumps(entries, ensure_ascii=False)
+    plural = "string" if num_captions == 1 else "strings"
+    return (
+        "OUTPUT FORMAT\n\n"
+        f"Output a single JSON array of exactly {num_captions} {plural}, and nothing else — no "
+        "markdown fences, no commentary, no keys other than the array itself.\n\n"
+        "Example shape (do not reuse this content, it is only to show the format):\n"
+        f"{example}"
+    )
 
-Write the JSON array of 5 captions now. DO NOT INCLUDE ANY NON-ENGLISH CHARACTERS, and do not include anything outside the JSON array."""
+
+def build_prompt_template(num_captions):
+    """Assemble the full prompt template for the requested number of captions.
+
+    Returns a string with {dict_string}, {metadata}, {grid_label}, and
+    {ascii_grid} placeholders left intact for the per-scene .format() call.
+    """
+    plural = "caption" if num_captions == 1 else "captions"
+    return (
+        _PROMPT_INTRO
+        + _build_task_section(num_captions)
+        + "\n\n"
+        + _build_output_section(num_captions)
+        + "\n\n"
+        "Symbol dictionary:\n{dict_string}\n\n\n"
+        "Metadata:\n{metadata}\n\n\n"
+        "{grid_label}:\n{ascii_grid}\n\n"
+        f"Write the JSON array of {num_captions} {plural} now. DO NOT INCLUDE ANY NON-ENGLISH "
+        "CHARACTERS, and do not include anything outside the JSON array."
+    )
 
 
 # ── Core helpers ──────────────────────────────────────────────────────────────
@@ -545,8 +600,26 @@ def find_non_ascii_chars(captions):
     return sorted(bad)
 
 
+def build_avoidance_clause(bad_chars):
+    """Build a CRITICAL clause banning every character seen so far this run.
+
+    Returns "" when no bad characters have been collected yet, so a clean run
+    leaves the base prompt untouched.
+    """
+    if not bad_chars:
+        return ""
+    char_list = ", ".join(f"{ch!r} (U+{ord(ch):04X})" for ch in sorted(bad_chars))
+    return (
+        f"\n\nCRITICAL: The following non-ASCII characters have appeared in earlier outputs during "
+        f"this run and are strictly forbidden: {char_list}. NEVER use any of them. Use only plain "
+        f"ASCII characters (code points 0-127) — for example, a hyphen-minus '-' instead of an em "
+        f"dash '—', and straight quotes instead of curly quotes. Output the JSON array with only "
+        f"ASCII characters."
+    )
+
+
 def parse_captions(raw_response):
-    """Parse the LLM's JSON array of 5 captions, with a line-based fallback.
+    """Parse the LLM's JSON array of captions, with a line-based fallback.
 
     Returns a list of caption strings (possibly empty if parsing fails entirely).
     """
@@ -636,7 +709,10 @@ def _validate_tileset_match(dataset, id_to_char, tileset_path):
 
 def generate_captions(dataset_path, tileset_path, output_path, model, url, timeout, retries,
                        grid_format="ascii", tileset_we_path=None, ascii_output_dir=None,
-                       backend="ollama", api_key=None, max_tokens=900, max_reprompts=3):
+                       backend="ollama", api_key=None, max_tokens=900, max_reprompts=3,
+                       num_captions=5):
+    prompt_template = build_prompt_template(num_captions)
+
     with open(dataset_path, "r", encoding="utf-8") as f:
         dataset = json.load(f)
 
@@ -671,7 +747,8 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
     errors = 0
     all_bad_chars = set()
     total_reprompts = 0
-    reprompted_scenes = []
+    reprompted_scenes = {}  # scene name -> number of reprompts it needed
+    last_full_prompt = None  # most recent fully-rendered prompt incl. the accumulated ban clause
 
     for i, item in enumerate(dataset):
         scene = item["scene"] if isinstance(item, dict) else item
@@ -693,7 +770,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
             continue
 
         metadata = compute_metadata(scene, id_to_char, char_names, tileset_path)
-        prompt = PROMPT_TEMPLATE.format(
+        prompt = prompt_template.format(
             dict_string=dict_string,
             grid_label=grid_label,
             ascii_grid=ascii_grid,
@@ -702,9 +779,14 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
         print(f"[{i + 1}/{total}] {name} ...", end=" ", flush=True)
         captions = []
-        active_prompt = prompt
         try:
             for attempt in range(max_reprompts):
+                # Every attempt -- including the first attempt of a brand-new scene --
+                # carries the running ban list of every bad char seen so far this run.
+                active_prompt = prompt + build_avoidance_clause(all_bad_chars)
+                if all_bad_chars:
+                    last_full_prompt = active_prompt
+
                 if backend == "claude":
                     raw = call_claude(active_prompt, model, api_key, max_tokens, timeout, retries)
                 else:
@@ -715,20 +797,13 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                 if not bad_chars:
                     break
                 all_bad_chars.update(bad_chars)
-                if name not in reprompted_scenes:
-                    reprompted_scenes.append(name)
+                reprompted_scenes[name] = reprompted_scenes.get(name, 0) + 1
                 total_reprompts += 1
-                char_list = ", ".join(f"{ch!r} (U+{ord(ch):04X})" for ch in bad_chars)
+                current_list = ", ".join(f"{ch!r} (U+{ord(ch):04X})" for ch in bad_chars)
                 print(
                     f"\n  [REPROMPT {attempt + 1}/{max_reprompts - 1}] "
-                    f"non-English character(s) {char_list} in caption, retrying...",
+                    f"non-English character(s) {current_list} in caption, retrying...",
                     end=" ", flush=True,
-                )
-                active_prompt = prompt + (
-                    f"\n\nCRITICAL: Your previous response contained these forbidden non-ASCII characters: {char_list}. "
-                    f"This is strictly forbidden. Use only plain ASCII characters (code points 0-127). "
-                    f"For example, use a hyphen-minus '-' instead of an em dash '\u2014', "
-                    f"and straight quotes instead of curly quotes. Output the JSON array now with only ASCII characters."
                 )
                 captions = []
         except RuntimeError as e:
@@ -742,6 +817,10 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
             print("ERROR: no usable captions after reprompts; dropping level from output")
             errors += 1
             continue
+
+        # The model occasionally returns more than asked; keep only what we want.
+        if len(captions) > num_captions:
+            captions = captions[:num_captions]
 
         print(f"OK ({len(captions)} captions)")
 
@@ -774,8 +853,19 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         print("Bad characters encountered: none")
     if reprompted_scenes:
         print("Scenes that needed a reprompt:")
-        for scene_name in reprompted_scenes:
-            print(f"  - {scene_name}")
+        for scene_name, count in reprompted_scenes.items():
+            times = "time" if count == 1 else "times"
+            print(f"  - {scene_name} (reprompted {count} {times})")
+
+    print("\n" + "=" * 70)
+    if last_full_prompt is not None:
+        print("Final full prompt sent (base prompt + accumulated character ban clause):")
+        print("=" * 70)
+        print(last_full_prompt)
+    else:
+        print("Full prompt template used (no bad characters occurred this run):")
+        print("=" * 70)
+        print(prompt_template)
 
 
 def main():
@@ -813,6 +903,16 @@ def main():
         help="Max output tokens for the Claude backend (5 captions need more room than 1). Default: 900",
     )
     parser.add_argument(
+        "--num-captions",
+        type=int,
+        default=1,
+        help=(
+            "How many captions to generate per level. The prompt adapts: with 1 it asks "
+            "for a single natural caption, with 2+ it asks for that many that vary widely "
+            "in length and register. Default: 1"
+        ),
+    )
+    parser.add_argument(
         "--model",
         default=None,
         help=(
@@ -841,7 +941,7 @@ def main():
     parser.add_argument(
         "--max-reprompts",
         type=int,
-        default=3,
+        default=10,
         help=(
             "How many times to re-ask the LLM when its captions contain "
             "non-English characters. When all attempts are exhausted without a "
@@ -894,6 +994,10 @@ def main():
             sys.exit(1)
         api_key = load_api_key(args.api_key_file)
 
+    if args.num_captions < 1:
+        print("Error: --num-captions must be at least 1")
+        sys.exit(1)
+
     model = args.model or ("claude-sonnet-4-6" if args.backend == "claude" else "qwen2.5:14b")
 
     generate_captions(
@@ -911,6 +1015,7 @@ def main():
         api_key=api_key,
         max_tokens=args.max_tokens,
         max_reprompts=args.max_reprompts,
+        num_captions=args.num_captions,
     )
 
 

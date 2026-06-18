@@ -68,7 +68,7 @@ if %ERRORLEVEL% neq 0 (
 echo === Step 1: Preparing dataset with LLM captions ===
 python build_dataset_with_ascii.py --input_file %INPUT% --output %RAW_OUTPUT% --tileset %TILESET% --sliding_window --stride 20 
 if %ERRORLEVEL% neq 0 ( echo ERROR: build_dataset_with_ascii.py failed. & exit /b 1 )
-python MarioMaker_llm_captions.py --dataset %RAW_OUTPUT% --tileset %TILESET% --output %CAPTIONED_OUTPUT% --model %MODEL% --ascii-output-dir "%LLM_ASCII_DIR%"
+python MarioMaker_llm_captions.py --dataset %RAW_OUTPUT% --tileset %TILESET% --output %CAPTIONED_OUTPUT% --model %MODEL% --ascii-output-dir "%LLM_ASCII_DIR%" --num-captions 1
 if %ERRORLEVEL% neq 0 ( echo ERROR: MarioMaker_llm_captions.py failed. & exit /b 1 )
 python split_mario_maker_data.py --json %CAPTIONED_OUTPUT% --seed %SEED%
 if %ERRORLEVEL% neq 0 ( echo ERROR: split_mario_maker_data.py failed. & exit /b 1 )
