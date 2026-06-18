@@ -80,8 +80,8 @@ This is a "best effort" conversion, not a perfect round trip:
 Usage
 -----
     python json_to_swe.py bcd_levels/json/<id>_overworld.json
-    python json_to_swe.py bcd_levels/json/<id>_overworld.json -o awesome.swe
-    python json_to_swe.py <id>_overworld.json --user patwick --name "My Level"
+    python json_to_swe.py bcd_levels/json/<id>_overworld.json -o <filename>.swe
+    python json_to_swe.py <id>_overworld.json --user <exact_username> --name <placeholder name>
 
 If a matching *_subworld.json sits next to the overworld file it is converted
 into SB1 automatically.
@@ -603,15 +603,40 @@ def ssp_sprite_name(gamestyle, theme):
     return f"spr_{prefix}_ssp1_{t}" if prefix else f"spr_ssp1_{t}"
 
 
+# Mushroom Platform (mp1) themed sprite suffixes that ACTUALLY exist in
+# SMMWE's data.win, per gamestyle-prefix -- unlike ssp1/puente, the mp1 family
+# is sparse: SMB1/SMB3/SMW only ship airship/snow/underwater theme variants and
+# render every other theme (overworld/underground/castle/ghost/desert/forest/
+# sky) with their plain base sprite; only NSMBU has the full themed set (and no
+# "sky", no bare base). Assembling spr_<prefix>_mp1_<theme> for a theme not in
+# this table yields a non-existent sprite -> GameMaker draws sprite index -1 and
+# crashes obj_modelsizable ("Unable to render sprite -1"). Verified by grepping
+# C:\Program Files (x86)\SMMWE\data.win.
+MP1_THEMES = {
+    "":      {"airship", "snow", "underwater"},
+    "SMB":   {"airship", "snow", "underwater"},
+    "SMB3":  {"airship", "snow", "underwater"},
+    "NSMBU": {"airship", "castle", "desert", "forest", "ghost", "overworld",
+              "snow", "underground", "underwater"},
+}
+# Fallback sprite when the requested theme has no mp1 variant. SMB1/SMB3/SMW use
+# their base "day" sprite; NSMBU has no bare base, so it falls back to overworld.
+MP1_FALLBACK = {
+    "":      "spr_mp1",
+    "SMB":   "spr_SMB_mp1",
+    "SMB3":  "spr_SMB3_mp1",
+    "NSMBU": "spr_NSMBU_mp1_overworld",
+}
+
+
 def mp1_sprite_name(gamestyle, theme):
-    """Mushroom Platform sprite name for a given SWE gamestyle/theme.
-    Confirmed for NSMBU/ghost ("spr_NSMBU_mp1_ghost") via a hand-placed
-    reference save; other gamestyles/themes follow the ssp1 naming pattern
-    (best-effort, SSP1_THEMES reused since mp1 has no separate theme list)."""
+    """Mushroom Platform sprite name for a given SWE gamestyle/theme, restricted
+    to sprites that actually exist in SMMWE's data.win (see MP1_THEMES)."""
     prefix = GAMESTYLE_SPR_PREFIX.get(gamestyle, "NSMBU")
-    valid = SSP1_THEMES.get(prefix, SSP1_THEMES["NSMBU"])
-    t = theme if theme in valid else "overworld"
-    return f"spr_{prefix}_mp1_{t}" if prefix else f"spr_mp1_{t}"
+    valid = MP1_THEMES.get(prefix, MP1_THEMES["NSMBU"])
+    if theme in valid:
+        return f"spr_{prefix}_mp1_{theme}" if prefix else f"spr_mp1_{theme}"
+    return MP1_FALLBACK.get(prefix, MP1_FALLBACK["NSMBU"])
 
 
 def bullebill_sprite_name(gamestyle):
