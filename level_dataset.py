@@ -343,6 +343,470 @@ def mm_tiles(game):
     return MM_tile_images
 
 
+# ---------------------------------------------------------------------------
+# Mario Maker 2 tiles
+#
+# Unlike the SMB/LR/MM sheets above (a fixed grid of equal tiles indexed by
+# hardcoded (row, col)), MM2 sprites are arbitrary {x, y, w, h} rectangles
+# packed into img/spritesheet.png. toost stores those rectangles in its
+# LevelData.hpp ObjectLocation map, keyed by (OBJ_<id> | <Gamestyle>). To turn
+# a mm2_tileset_we.json glyph into a sprite we chain three existing tables:
+#
+#   glyph  --OBJ_META-->  object name  --NAME_TO_ID-->  object id
+#   (OBJ_<id> | Gamestyle)  --ObjectLocation-->  (x, y, w, h)  in spritesheet
+#
+# mm2_viewer_json.py already parses ObjectLocation the same way (it replays
+# toost's drawing_instructions); this mirrors that loader so the ascii browser
+# can show real MM2 art without depending on the tkinter viewer.
+# ---------------------------------------------------------------------------
+
+# Caches so the 2900-line LevelData.hpp and the spritesheet are read only once.
+_mm2_sprite_table = None   # {combined_id: (x, y, w, h)}
+_mm2_const_map = None      # {"OBJ_0": 0, "SMB1": 12621, ...}
+_mm2_spritesheet = None    # PIL RGBA image of img/spritesheet.png
+_mm2_tilesheet_cache = {}  # {(gamestyle, theme): PIL RGBA of img/tile/<raw>-<theme>.png}
+
+# Gamestyles tried in order when the requested style lacks a sprite for an
+# object (e.g. style-exclusive items). SMW first because that is the pipeline
+# default (mm2_ascii_to_json.py --gamestyle smw).
+_MM2_STYLE_FALLBACK = ("SMW", "SMB1", "SMB3", "NSMBU", "SM3DW")
+_MM2_GAMESTYLE_RAW = {
+    "SMB1": 12621, "SMB3": 13133, "SMW": 22349, "NSMBU": 21847, "SM3DW": 22323,
+}
+
+# Tile-type objects (blocks, coins, spikes, ...) are NOT in the spritesheet --
+# toost draws them from the gamestyle/theme tilesheet (img/tile/<raw>-<theme>.png)
+# via DrawTile. These (x, y) 16px cells come from LevelDrawer::Setup's TileLoc
+# table plus the handful of objects drawn by dedicated autotile cases (pipe 9,
+# mushroom platform 14, semisolid 16, bridge 17, vine 64). Used only when an
+# object has no spritesheet entry.
+_MM2_TILESHEET_CELL = {
+    4:  (1, 0),    # Block
+    5:  (2, 0),    # ? Block
+    6:  (6, 0),    # Hard Block
+    8:  (7, 0),    # Coin
+    9:  (12, 0),   # Pipe (body cell; pipes are multi-tile)
+    14: (4, 2),    # Mushroom Platform (cap centre)
+    16: (8, 3),    # Semisolid Platform (top surface)
+    17: (1, 2),    # Bridge
+    21: (0, 4),    # Donut Block
+    22: (6, 6),    # Cloud
+    23: (4, 0),    # Note Block
+    29: (3, 0),    # Hidden Block
+    43: (2, 4),    # Spikes
+    63: (8, 7),    # Ice Block
+    64: (14, 7),   # Vine (middle segment)
+    99: (2, 23),   # ON/OFF Block
+    100: (3, 22),  # Dotted-Line Block
+}
+# Fully-surrounded interior ground cell for the '#' glyph: GrdLoc[255] from
+# LevelDrawer::Setup's GS[] table (GS[255] = 0x6F -> X=6, Y=15).
+_MM2_GROUND_CELL = (6, 15)
+# Objects whose spritesheet key is a variant enum rather than OBJ_<id>: the
+# Piranha Plant (id 2) is stored as OBJ_2A0 (down-facing baseline form).
+_MM2_SPRITE_CONST = {
+    2: "OBJ_2A0",
+}
+
+
+def _load_mm2_sprite_table():
+    """Parse toost's LevelData.hpp ObjectLocation map and load the spritesheet.
+
+    Populates the module-level caches. Mirrors mm2_viewer_json._load_level_data:
+    every ``NAME = NUMBER`` enum constant (OBJ_*, gamestyles, ...) is flattened
+    into _mm2_const_map, then each ``{ OBJ_x [| STYLE], { x, y, w, h } }`` entry
+    is resolved to an integer key. Both files are searched in the same spots the
+    viewer uses; if either is missing the caches stay empty and mm2_tiles() falls
+    back to flat colour tiles.
+    """
+    global _mm2_sprite_table, _mm2_const_map, _mm2_spritesheet
+    if _mm2_sprite_table is not None:
+        return
+
+    _mm2_sprite_table = {}
+    _mm2_const_map = {}
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    hpp_path = next((p for p in (
+        os.path.join(script_dir, "LevelData.hpp"),
+        os.path.join(script_dir, "toost_stuff", "LevelData.hpp"),
+        os.path.join(script_dir, "toost_stuff", "src", "LevelData.hpp"),
+        os.path.join(script_dir, "..", "toost", "src", "LevelData.hpp"),
+    ) if os.path.exists(p)), None)
+    sheet_path = next((p for p in (
+        os.path.join(script_dir, "img", "spritesheet.png"),
+        os.path.join(script_dir, "toost_stuff", "img", "spritesheet.png"),
+    ) if os.path.exists(p)), None)
+    if not hpp_path or not sheet_path:
+        print(f"mm2_tiles: LevelData.hpp ({hpp_path}) or spritesheet "
+              f"({sheet_path}) not found; falling back to colour tiles.")
+        return
+
+    with open(hpp_path, "r", encoding="utf-8") as fh:
+        hpp = fh.read()
+
+    # Flatten every `NAME = NUMBER,` enum constant (OBJ_*, SMB1, SMW, ...).
+    for m in re.finditer(r'^\s*([A-Za-z_]\w*)\s*=\s*(-?\d+)\s*,?\s*$', hpp, re.M):
+        _mm2_const_map[m.group(1)] = int(m.group(2))
+
+    # ObjectLocation entries: { NAME [| NAME], { x, y, w, h } }
+    entry_pat = re.compile(
+        r'\{\s*([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*))?\s*,'
+        r'\s*\{\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\}\s*\}'
+    )
+    for a, b, x, y, w, h in entry_pat.findall(hpp):
+        if a not in _mm2_const_map:
+            continue
+        key = _mm2_const_map[a]
+        if b:
+            if b not in _mm2_const_map:
+                continue
+            key |= _mm2_const_map[b]
+        _mm2_sprite_table[key] = (int(x), int(y), int(w), int(h))
+
+    _mm2_spritesheet = Image.open(sheet_path).convert("RGBA")
+
+
+def _mm2_fit(crop, dim, sky):
+    """Fit an RGBA sprite inside one dim x dim cell, then return an RGB tile.
+
+    The sprite is scaled to fit the cell preserving aspect ratio -- so a 64x64
+    Banzai Bill shrinks to fill the cell and a 16x32 Koopa becomes 8x16 -- with NO
+    distortion and NO overflow into neighbouring cells (each cell stays faithful
+    to its single tile id). It is anchored bottom-centre on the sky colour so
+    ground objects sit on the cell floor; transparent areas show the sky.
+    """
+    w, h = crop.size
+    if w <= 0 or h <= 0:
+        return Image.new("RGB", (dim, dim), sky)
+    scale = min(dim / w, dim / h)
+    nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
+    if (nw, nh) != (w, h):
+        crop = crop.resize((nw, nh), Image.NEAREST)
+    tile = Image.new("RGBA", (dim, dim), sky + (255,))
+    tile.paste(crop, ((dim - nw) // 2, dim - nh), crop)  # bottom-centre, alpha mask
+    return tile.convert("RGB")
+
+
+def _mm2_sprite_for_object(obj_id, gamestyle, dim, sky):
+    """Return a dim x dim RGB tile for an MM2 object id, or None if unavailable.
+
+    Tries the requested gamestyle first, then the fallback order, since some
+    objects only have sprites under certain styles. The cropped sprite (whatever
+    its native footprint -- a 16x32 Koopa, a 64x64 Banzai Bill, ...) is fit inside
+    a single cell by _mm2_fit: scaled to fit, undistorted, never overflowing into
+    the neighbouring cells that hold their own tiles.
+    """
+    if _mm2_spritesheet is None:
+        return None
+
+    styles = (gamestyle,) + tuple(s for s in _MM2_STYLE_FALLBACK if s != gamestyle)
+    obj_const = _mm2_const_map.get(_MM2_SPRITE_CONST.get(obj_id, f"OBJ_{obj_id}"))
+    if obj_const is None:
+        return None
+
+    coords = None
+    for style in styles:
+        gs_const = _mm2_const_map.get(style)
+        if gs_const is None:
+            continue
+        coords = _mm2_sprite_table.get(obj_const | gs_const)
+        if coords is not None:
+            break
+    if coords is None:
+        return None
+
+    x, y, w, h = coords
+    if w <= 0 or h <= 0:
+        return None
+    return _mm2_fit(_mm2_spritesheet.crop((x, y, x + w, y + h)), dim, sky)
+
+
+def _mm2_get_tilesheet(gamestyle, theme=0):
+    """Return a cached RGBA tilesheet (img/tile/<raw>-<theme>.png), or None.
+
+    Block/coin/ground tiles are drawn from this per-gamestyle/theme sheet rather
+    than the spritesheet (see _MM2_TILESHEET_CELL).
+    """
+    key = (gamestyle, theme)
+    if key in _mm2_tilesheet_cache:
+        return _mm2_tilesheet_cache[key]
+    sheet = None
+    gs_raw = _MM2_GAMESTYLE_RAW.get(gamestyle)
+    if gs_raw is not None:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        name = f"{gs_raw}-{theme}.png"
+        path = next((p for p in (
+            os.path.join(script_dir, "img", "tile", name),
+            os.path.join(script_dir, "toost_stuff", "img", "tile", name),
+        ) if os.path.exists(p)), None)
+        if path:
+            sheet = Image.open(path).convert("RGBA")
+    _mm2_tilesheet_cache[key] = sheet
+    return sheet
+
+
+def _mm2_tile_from_sheet(cell, gamestyle, dim, sky, theme=0):
+    """Return a dim x dim RGB tile cropped from the gamestyle tilesheet, or None.
+
+    Tilesheet cells are a single tile, so this fills the cell exactly; the cell's
+    own transparency (e.g. a coin's rounded corners) shows the sky backdrop.
+    """
+    sheet = _mm2_get_tilesheet(gamestyle, theme)
+    if sheet is None:
+        return None
+    tw = sheet.width // 16
+    cx, cy = cell
+    return _mm2_fit(sheet.crop((cx * tw, cy * tw, cx * tw + tw, cy * tw + tw)), dim, sky)
+
+
+def _mm2_glyph_objids():
+    """Return (chars, char_to_objid) for the MM2 tileset.
+
+    `chars` is the glyph order extract_tileset() uses (sorted glyphs + the '_'
+    padding tile), so index i is model tile id i. `char_to_objid` maps each glyph
+    to its MM2 object id (or None for sky/ground/unresolved), via OBJ_META (first
+    name listed for a glyph wins, as in mm2_ascii_to_json.build_char_to_name) ->
+    NAME_TO_ID. Shared by mm2_tiles() and the block-stamping renderer so they
+    never drift.
+    """
+    tileset_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), common_settings.MM2_TILESET)
+    with open(tileset_path, "r", encoding="utf-8") as f:
+        tiles = json.load(f)["tiles"]
+    chars = sorted(tiles.keys())
+    if "_" not in chars:
+        chars = chars + ["_"]
+
+    from mm2_json_to_ascii import OBJ_META
+    from mm2_ascii_to_json import NAME_TO_ID
+    char_to_name = {}
+    for name, (ch, _color, _cat) in OBJ_META.items():
+        if name == "_unknown":
+            continue
+        char_to_name.setdefault(ch, name)
+
+    char_to_objid = {}
+    for ch in chars:
+        name = char_to_name.get(ch)
+        char_to_objid[ch] = NAME_TO_ID.get(name) if name else None
+    return chars, char_to_objid
+
+
+def _mm2_native_sprite(obj_id, gamestyle):
+    """Return (rgba_sprite, (tw, th)) for an object at its native footprint.
+
+    Unlike _mm2_sprite_for_object (which fits the sprite into one cell), this keeps
+    the sprite at native resolution (16 px / tile) and reports its nominal tile
+    footprint -- a Thwomp is (2, 2), a Skewer (4, 4), a Swinging Claw (3, 5). The
+    renderer rescales it to whatever the glyph block actually occupies in the grid
+    (which can differ -- claws are painted 3x4 -- and may have overwritten cells).
+    Returns None if the object has no spritesheet sprite.
+    """
+    if _mm2_spritesheet is None or obj_id is None:
+        return None
+    obj_const = _mm2_const_map.get(_MM2_SPRITE_CONST.get(obj_id, f"OBJ_{obj_id}"))
+    if obj_const is None:
+        return None
+    styles = (gamestyle,) + tuple(s for s in _MM2_STYLE_FALLBACK if s != gamestyle)
+    coords = None
+    for style in styles:
+        gs_const = _mm2_const_map.get(style)
+        if gs_const is None:
+            continue
+        coords = _mm2_sprite_table.get(obj_const | gs_const)
+        if coords is not None:
+            break
+    if coords is None:
+        return None
+    x, y, w, h = coords
+    if w <= 0 or h <= 0:
+        return None
+    tw, th = max(1, round(w / 16)), max(1, round(h / 16))
+    return _mm2_spritesheet.crop((x, y, x + w, y + h)), (tw, th)
+
+
+def mm2_tiles(gamestyle=None):
+    """Map mm2_tileset_we.json glyphs to MM2 sprites (img/spritesheet.png + tiles).
+
+    Returns a list of dim x dim RGB tile images indexed exactly like
+    extract_tileset() orders the tileset (sorted glyphs, then the '_' padding
+    tile), so element i is the sprite for model tile id i. Enemies/items come from
+    the spritesheet, blocks/coins/pipes/ground from the gamestyle tilesheet; every
+    sprite is fit inside its own cell (undistorted, no overflow -- see _mm2_fit).
+    Air/padding render as sky blue and anything unresolved as grey.
+    """
+    if gamestyle is None:
+        gamestyle = common_settings.MM2_GAMESTYLE
+    dim = common_settings.MM2_TILE_PIXEL_DIM
+    sky = common_settings.MM2_SKY_COLOR
+
+    _load_mm2_sprite_table()
+    chars, char_to_objid = _mm2_glyph_objids()
+
+    sky_tile = Image.new("RGB", (dim, dim), sky)
+    grey_tile = Image.new("RGB", (dim, dim), (128, 128, 128))
+    # Ground '#': the fully-surrounded interior tile from the gamestyle tilesheet;
+    # solid theme-brown if the tilesheet is missing.
+    ground_tile = (_mm2_tile_from_sheet(_MM2_GROUND_CELL, gamestyle, dim, sky)
+                   or Image.new("RGB", (dim, dim), (0x8B, 0x69, 0x14)))
+
+    tile_images = []
+    for ch in chars:
+        if ch == " " or ch == "_":
+            tile_images.append(sky_tile)
+            continue
+        if ch == "#":
+            tile_images.append(ground_tile)
+            continue
+        obj_id = char_to_objid.get(ch)
+        tile = None
+        if obj_id is not None:
+            # Enemies/items live in the spritesheet; blocks/coins/pipes/etc. are
+            # tilesheet cells (no spritesheet entry) -- try sprite first, then tile.
+            tile = _mm2_sprite_for_object(obj_id, gamestyle, dim, sky)
+            if tile is None and obj_id in _MM2_TILESHEET_CELL:
+                tile = _mm2_tile_from_sheet(_MM2_TILESHEET_CELL[obj_id], gamestyle, dim, sky)
+        tile_images.append(tile if tile is not None else grey_tile)
+
+    return tile_images
+
+
+def _mm2_multitile_sprites(gamestyle):
+    """Return {tile_id: (rgba_sprite, (tw, th))} for objects spanning >1 cell.
+
+    Only multi-tile objects (Thwomp 2x2, Skewer 4x4, Koopa 1x2, ...) are included;
+    1x1 objects are handled by the per-cell mm2_tiles() path. The sprite is native
+    resolution; (tw, th) is its nominal footprint. Keyed by model tile id.
+    """
+    chars, char_to_objid = _mm2_glyph_objids()
+    out = {}
+    for tid, ch in enumerate(chars):
+        if ch in (" ", "_", "#"):
+            continue
+        res = _mm2_native_sprite(char_to_objid.get(ch), gamestyle)
+        if res is None:
+            continue
+        sprite, (tw, th) = res
+        if tw > 1 or th > 1:
+            out[tid] = (sprite, (tw, th))
+    return out
+
+
+def _mm2_components(grid, tid, consumed, h, w):
+    """4-connected components of cells equal to `tid` and not yet consumed."""
+    seen = [[False] * w for _ in range(h)]
+    comps = []
+    for sr in range(h):
+        for sc in range(w):
+            if grid[sr][sc] != tid or seen[sr][sc] or consumed[sr][sc]:
+                continue
+            stack = [(sr, sc)]
+            seen[sr][sc] = True
+            cells = []
+            while stack:
+                r, c = stack.pop()
+                cells.append((r, c))
+                for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nr, nc = r + dr, c + dc
+                    if (0 <= nr < h and 0 <= nc < w and not seen[nr][nc]
+                            and not consumed[nr][nc] and grid[nr][nc] == tid):
+                        seen[nr][nc] = True
+                        stack.append((nr, nc))
+            comps.append(cells)
+    return comps
+
+
+def _render_mm2_samples(sample_indices, output_dir, start_index, prompts, gamestyle=None):
+    """Render MM2 scenes, stamping multi-tile sprites across their glyph blocks.
+
+    The forward converter (mm2_json_to_ascii) paints each object as a block of its
+    glyph -- a Thwomp is a 2x2 patch of 't', a Skewer a 4x4 patch of '0', a
+    Swinging Claw a 3x4 patch of 'j'. Pass 1 finds each connected block of such a
+    glyph and stamps the sprite ONCE scaled to the block's bounding box, then marks
+    the whole box consumed -- so the object takes priority and COVERS any other
+    tile that overlaps its footprint (e.g. a stray block dropped on a skewer). The
+    box may differ from the sprite's nominal footprint (claws are 3x4, not 3x5) and
+    may have holes from overwritten cells; bounding-box stamping handles both. If a
+    block is much larger than one object (merged / generated noise) it is tiled
+    into footprint-sized stamps. Pass 2 fills everything else per-cell (1x1 objects,
+    blocks, ground, and fragments too small to be a real object).
+
+    Mirrors visualize_samples' contract: with output_dir it saves one PNG per scene
+    and returns None; otherwise it returns the first scene's image.
+    """
+    if gamestyle is None:
+        gamestyle = common_settings.MM2_GAMESTYLE
+    ts = common_settings.MM2_TILE_PIXEL_DIM
+    sky = common_settings.MM2_SKY_COLOR
+
+    _load_mm2_sprite_table()
+    cell_tiles = mm2_tiles(gamestyle)         # per-cell RGB fallback, by tile id
+    multitile = _mm2_multitile_sprites(gamestyle)
+    n = len(cell_tiles)
+
+    first_image = None
+    for idx, sample_index in enumerate(sample_indices):
+        h, w = sample_index.shape
+        grid = [[int(sample_index[r][c]) % n for c in range(w)] for r in range(h)]
+        canvas = Image.new("RGB", (w * ts, h * ts), sky)
+        consumed = [[False] * w for _ in range(h)]
+
+        # Pass 1: stamp multi-tile sprites across their connected glyph blocks.
+        for tid, (sprite, (tw, th)) in multitile.items():
+            for cells in _mm2_components(grid, tid, consumed, h, w):
+                # Skip single-cell specks (a stray glyph shouldn't trigger a big
+                # cover-up stamp) and scattered noise (require a solid-ish block).
+                if len(cells) < 2:
+                    continue
+                rs = [p[0] for p in cells]
+                cs = [p[1] for p in cells]
+                r0, r1, c0, c1 = min(rs), max(rs), min(cs), max(cs)
+                bw, bh = c1 - c0 + 1, r1 - r0 + 1
+                if len(cells) < 0.5 * bw * bh:
+                    continue
+                # A block bigger than this object in either axis is a row/stack of
+                # separate objects (a line of koopas), a tall pole, or merged blobs
+                # -- stamping would only stretch them, so leave those to pass 2.
+                if bw > tw or bh > th:
+                    continue
+                # Render the sprite at its NATIVE footprint (no distortion), anchored
+                # bottom-centre over the block. When the data footprint matches the
+                # sprite (Skewer 4x4, Thwomp 2x2) this lands exactly on the block and
+                # covers any holes; when it's smaller (Bowser is painted 2x1 but its
+                # sprite is 3x3, Bowser Jr 2x1 vs 2x2) the sprite renders full size,
+                # overflowing up/sideways and covering those cells -- the object
+                # takes priority over whatever it overlaps.
+                rc0 = max(0, min(round((c0 + c1) / 2 - (tw - 1) / 2), w - tw))
+                rr0 = max(0, min(r1 - th + 1, h - th))
+                spr = sprite
+                target = (tw * ts, th * ts)
+                if spr.size != target:
+                    spr = spr.resize(target, Image.NEAREST)
+                canvas.paste(spr, (rc0 * ts, rr0 * ts), spr)
+                for y in range(rr0, rr0 + th):
+                    for x in range(rc0, rc0 + tw):
+                        consumed[y][x] = True
+
+        # Pass 2: per-cell fitted tiles for everything not already stamped.
+        for r in range(h):
+            for c in range(w):
+                if not consumed[r][c]:
+                    canvas.paste(cell_tiles[grid[r][c]], (c * ts, r * ts))
+
+        if prompts:
+            sanitized_prompt = prompts[idx].replace(".", "")[:50]
+            file_name = f"sample_{idx + start_index} - {sanitized_prompt}.png"
+        else:
+            file_name = f"sample_{idx + start_index} - unconditional.png"
+
+        if output_dir:
+            canvas.save(os.path.join(output_dir, file_name))
+        elif first_image is None:
+            first_image = canvas
+
+    return first_image
+
 
 def visualize_samples(samples, output_dir=None, use_tiles=True, start_index=0, block_embeddings=None, prompts=None, game='Mario'):
     """
@@ -376,6 +840,11 @@ def visualize_samples(samples, output_dir=None, use_tiles=True, start_index=0, b
         channels = samples.shape[1]
         height = samples.shape[2]
         width = samples.shape[3]
+        # MM2 stamps multi-tile sprites across their glyph blocks (Thwomp 2x2,
+        # Skewer 4x4, ...), so it needs its own renderer, not the per-cell paste.
+        if game == 'MM2':
+            image = _render_mm2_samples(sample_indices, output_dir, start_index, prompts)
+            return image if image is not None else sample_indices
         if game == 'LR': #and width == lr_common_settings.LR_WIDTH:
             #print("Using Lode Runner tiles")
             tile_images = lr_tiles()

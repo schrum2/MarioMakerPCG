@@ -233,7 +233,8 @@ class TileViewer(tk.Tk):
             "Mario": "Mario",
             "Lode Runner": "LR",
             "Mega Man (Simple)": "MM-Simple",
-            "Mega Man (Full)": "MM-Full"
+            "Mega Man (Full)": "MM-Full",
+            "Mario Maker 2": "MM2"
         }
 
         def on_game_select(Event=None):
@@ -244,7 +245,7 @@ class TileViewer(tk.Tk):
         self.game = tk.StringVar(value=self.game_display_to_real_mapping[self.game_display_var.get()])
         self.game_label = ttk.Label(self.composed_frame, text="Select Game:", style="TLabel")
         self.game_label.pack()
-        self.game_dropdown = ttk.Combobox(self.composed_frame, textvariable=self.game_display_var, values=["Mario", "Lode Runner", "Mega Man (Simple)", "Mega Man (Full)"], state="readonly")
+        self.game_dropdown = ttk.Combobox(self.composed_frame, textvariable=self.game_display_var, values=["Mario", "Lode Runner", "Mega Man (Simple)", "Mega Man (Full)", "Mario Maker 2"], state="readonly")
         self.game_dropdown.pack()
         self.game_dropdown.bind("<<ComboboxSelected>>", on_game_select)
 
