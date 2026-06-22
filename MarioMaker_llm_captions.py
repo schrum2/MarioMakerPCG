@@ -731,12 +731,31 @@ def parse_captions(raw_response):
     return [ln for ln in lines if ln]
 
 
+def captions_from_entry(entry):
+    """Collect an entry's captions from 'caption', 'caption1', 'caption2', ...
+
+    Falls back to the older 'captions' list field for datasets generated
+    before this naming switch, so resume still works on older output files.
+    """
+    captions = [entry["caption"]] if entry.get("caption") else []
+    idx = 1
+    while f"caption{idx}" in entry:
+        captions.append(entry[f"caption{idx}"])
+        idx += 1
+    if not captions and entry.get("captions"):
+        captions = list(entry["captions"])
+    return captions
+
+
 def load_existing(output_path):
     if not os.path.isfile(output_path):
         return {}
     with open(output_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return {item["name"]: item for item in data if "captions" in item or "caption" in item}
+    return {
+        item["name"]: item for item in data
+        if "captions" in item or "caption" in item or "caption1" in item
+    }
 
 
 def _write(output_path, data):
@@ -845,10 +864,14 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
         if name in existing:
             cached = existing[name]
-            # Older outputs may only have the "captions" list; backfill the singular
-            # "caption" so resumed runs don't reintroduce the missing-key shape.
+            # Older outputs store captions under "captions" (a list); migrate them
+            # to "caption"/"caption1"/"caption2"/... so resumed runs use the
+            # current on-disk shape.
             if "caption" not in cached and cached.get("captions"):
-                cached["caption"] = cached["captions"][0]
+                migrated = captions_from_entry(cached)
+                cached.pop("captions", None)
+                for idx, cap in enumerate(migrated):
+                    cached["caption" if idx == 0 else f"caption{idx}"] = cap
             results.append(cached)
             skipped += 1
             continue
@@ -912,12 +935,9 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         if deterministic:
             captions.append(deterministic)
 
-        entry = {
-            "name": name,
-            "scene": scene,
-            "caption": captions[0] if captions else "",
-            "captions": captions,
-        }
+        entry = {"name": name, "scene": scene}
+        for idx, cap in enumerate(captions):
+            entry["caption" if idx == 0 else f"caption{idx}"] = cap
         if deterministic:
             entry["prompt"] = deterministic
         results.append(entry)

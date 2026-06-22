@@ -304,11 +304,16 @@ class TileViewer(tk.Tk):
                 if isinstance(item, list):
                     normalized_dataset.append({'scene': item, 'captions': ['']})
                 else:
-                    # MarioMaker_llm_captions.py stores multiple captions under
-                    # 'captions'; fall back to the singular 'caption' field, or ''.
-                    captions = item.get('captions')
+                    # MarioMaker_llm_captions.py stores multiple captions as
+                    # 'caption', 'caption1', 'caption2', ... ; collect them all
+                    # into an in-memory 'captions' list for display/navigation.
+                    captions = [item['caption']] if item.get('caption') else []
+                    idx = 1
+                    while f'caption{idx}' in item:
+                        captions.append(item[f'caption{idx}'])
+                        idx += 1
                     if not captions:
-                        captions = [item.get('caption', '')]
+                        captions = ['']
                     item['captions'] = captions
                     item.setdefault('caption', captions[0])
                     normalized_dataset.append(item)
