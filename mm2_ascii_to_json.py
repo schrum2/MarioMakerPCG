@@ -139,21 +139,40 @@ def parse_ascii(text):
     return rows, width
 
 
-def make_object(name, col, row):
-    """Build a base-schema object entry for a 1x1 tile at (col, row).
+# Pipe direction is the low bits of `flag` (% 0x80): 0x00=R, 0x40=U. DEFAULT_FLAG
+# already carries 0x40, so a reconstructed vertical pipe is mouth-up by default;
+# a horizontal one clears those bits back to 0x00 (mouth-right). See coalesce().
+PIPE_FLAG_U = DEFAULT_FLAG               # 0x..40  -> Up   (build_pipes default)
+PIPE_FLAG_R = DEFAULT_FLAG & ~0x60       # 0x..00  -> Right
 
-    Coordinates use the real .bcd tile-center convention
-    (x = col*160 + 80, y = row*160 + 80); json_to_bcd.py / mm2_viewer_json.py /
-    json_to_swe.py all expect this. flags are the baseline value; cid/lid/sid
-    are unlinked (-1)."""
+
+def make_object(name, col, row, w=1, h=1, flag=DEFAULT_FLAG):
+    """Build a base-schema object entry of size w x h with bottom-left tile at
+    (col, row).
+
+    Coordinates use the real .bcd convention the rest of the toolchain
+    (json_to_bcd.py / mm2_viewer_json.py / json_to_swe.py) consumes:
+
+      * left-anchored objects (Pipe, Mushroom/Semisolid/Bridge, One-Way Wall;
+        _REV_LEFT_ANCHOR) store x as the LEFT-tile centre  ->  x = col*160 + 80,
+        matching col = x // 160 in the decoders.
+      * everything else stores x as the CENTRE of its w-wide span  ->
+        x = (col + w//2)*160 + (80 if w odd else 0), matching col = x//160 - w//2.
+
+    y is always the bottom-row centre (row = y // 160). flags are the baseline
+    value (with the pipe direction folded in for pipes); cid/lid/sid unlinked."""
+    if name in _REV_LEFT_ANCHOR:
+        x = col * TILE + TILE_CENTER
+    else:
+        x = (col + w // 2) * TILE + (TILE_CENTER if w % 2 else 0)
     return {
         "name": name,
-        "x": col * TILE + TILE_CENTER,
+        "x": x,
         "y": row * TILE + TILE_CENTER,
-        "w": 1,
-        "h": 1,
-        "flag": DEFAULT_FLAG,
-        "cflag": DEFAULT_FLAG,
+        "w": w,
+        "h": h,
+        "flag": flag,
+        "cflag": flag,
         "ex": 0,
         "id": NAME_TO_ID[name],
         "cid": -1,
@@ -161,6 +180,182 @@ def make_object(name, col, row):
         "sid": -1,
         "link_type": 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Multi-tile object coalescing (ASCII -> JSON)
+#
+# The forward painter (mm2_json_to_ascii.build_ascii_grid) draws each object as a
+# w x h block of its glyph using the real MM2 JSON w/h. Reading ASCII back one
+# glyph at a time would turn every cell into its own 1x1 object: a 2x2 Thwomp
+# comes back as FOUR thwomps, a 5-wide Mushroom Platform as five separate 1x1
+# platforms (each drawn as a whole tiny mushroom by SMM:WE instead of stem + cap
+# pieces), a 2-wide pipe column as 2N length-1 pipes, two-tile doors as mispaired
+# half-doors, and so on.
+#
+# coalesce() instead groups 4-connected same-glyph cells back into correctly
+# sized multi-tile objects, so json_to_swe / json_to_bcd / the viewer all see the
+# real footprint -- and SMM:WE renders ONE object with its proper internal pieces.
+#
+# Footprints/policies are grounded in the real toost JSON export (Bullet Bill
+# Blaster 1x2, Mushroom Platform variable, Big Coin 2x2, Checkpoint 2x2, Koopa
+# 1x1 -- all confirmed against the reference levels in big doc/1/json),
+# level_dataset.py's documented *painted* footprints (Thwomp 2x2, Skewer 4x4,
+# Swinging Claw 3x4) and json_to_swe.py (Thwomp's h=2 anchor, the platform S7
+# families). Objects NOT listed here stay 1x1 -- correct for blocks, coins,
+# spikes and every single-tile enemy. Listing a fixed-size object that turns out
+# to actually be 1x1 is harmless: clamping (below) still yields exactly one
+# object for an isolated cell. Only genuinely multi-tile objects are listed, so a
+# long row of (1x1) spikes/coins is never wrongly merged.
+# ---------------------------------------------------------------------------
+_FIXED, _BBOX, _MUSHROOM, _HRUN, _VRUN, _PIPE = (
+    "fixed", "bbox", "mushroom", "hrun", "vrun", "pipe")
+
+# Objects whose x is the LEFT-tile centre (col = x // 160), matching
+# OBJ_LEFT_ANCHOR_IDS in json_to_swe.py and _LEFT_ANCHOR in the forward path.
+_REV_LEFT_ANCHOR = frozenset({
+    "Mushroom Platform", "Semisolid Platform", "Bridge", "Pipe",
+    "One-Way Wall", "One-Way",
+})
+
+# name -> coalescing policy. _FIXED tiles a glyph block into fw x fh stamps (so a
+# row of two 2x2 thwomps becomes two thwomps, but an isolated <2x2 block clamps
+# to one); _BBOX emits one object covering the whole block; _MUSHROOM recovers a
+# cap+stem platform; _HRUN/_VRUN split into 1-tall / 1-wide runs; _PIPE rebuilds a
+# 2-wide directional pipe. Names are the canonical CHAR_TO_NAME outputs.
+COALESCE_POLICY = {
+    # fixed 2x2 enemies / objects (each instance is a single 2x2 sprite)
+    "Thwomp":             (_FIXED, 2, 2),
+    "Saw":                (_FIXED, 2, 2),
+    "Chain Chomp":        (_FIXED, 2, 2),
+    "Boom Boom":          (_FIXED, 2, 2),
+    "Banzai Bill":        (_FIXED, 2, 2),
+    "Wiggler":            (_FIXED, 2, 2),
+    "Angry Sun":          (_FIXED, 2, 2),
+    "Bowser":             (_FIXED, 2, 2),
+    "Bowser Jr.":         (_FIXED, 2, 2),
+    "Bowser Jr":          (_FIXED, 2, 2),
+    "Clown Car":          (_FIXED, 2, 2),
+    "Goomba's Shoe":      (_FIXED, 2, 2),
+    "Yoshi's Egg":        (_FIXED, 2, 2),
+    "Checkpoint Flag":    (_FIXED, 2, 2),  # confirmed 2x2 in big doc/1/json
+    "Big Coin":           (_FIXED, 2, 2),  # confirmed 2x2 in big doc/1/json
+    # fixed larger sprites (documented painted footprints in level_dataset.py)
+    "Skewer":             (_FIXED, 4, 4),
+    "Swinging Claw":      (_FIXED, 3, 4),
+    # door: 1 wide x 2 tall; grouping the two cells stops build_doors mispairing
+    # a single door's halves into a warp
+    "Door":               (_FIXED, 1, 2),
+    # variable-size platforms / structures
+    "Mushroom Platform":  (_MUSHROOM,),    # cap (top row) + centred stem
+    "Semisolid Platform": (_BBOX,),
+    "Half-Collision Platform": (_BBOX,),
+    "One-Way Wall":       (_BBOX,),
+    "One-Way":            (_BBOX,),
+    "Bridge":             (_HRUN,),        # one walkable row, any width
+    "Lift":               (_HRUN,),
+    "Bullet Bill Blaster":(_VRUN,),        # 1 wide, stacked any height
+    "Vine":               (_VRUN,),
+    "Pipe":               (_PIPE,),        # 2 wide, directional
+}
+
+
+def _connected_components(cells):
+    """4-connected components of a set of (col, row) cells."""
+    cells = set(cells)
+    seen = set()
+    comps = []
+    for start in cells:
+        if start in seen:
+            continue
+        stack = [start]
+        seen.add(start)
+        comp = []
+        while stack:
+            c, r = stack.pop()
+            comp.append((c, r))
+            for dc, dr in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nb = (c + dc, r + dr)
+                if nb in cells and nb not in seen:
+                    seen.add(nb)
+                    stack.append(nb)
+        comps.append(comp)
+    return comps
+
+
+def _runs(values):
+    """Yield (start, length) for each maximal run of consecutive ints."""
+    values = sorted(values)
+    start = prev = values[0]
+    for v in values[1:]:
+        if v == prev + 1:
+            prev = v
+        else:
+            yield start, prev - start + 1
+            start = prev = v
+    yield start, prev - start + 1
+
+
+def coalesce(name, cells, out):
+    """Append reconstructed object(s) for every cell tagged `name` to `out`.
+
+    `cells` is the set of (col, row) cells carrying this object's glyph; the
+    policy in COALESCE_POLICY decides how connected blocks become objects.
+    Objects with no policy stay 1x1 (one per cell)."""
+    policy = COALESCE_POLICY.get(name)
+    if policy is None:
+        for col, row in cells:
+            out.append(make_object(name, col, row))
+        return
+
+    kind = policy[0]
+    for comp in _connected_components(cells):
+        cols = [c for c, _ in comp]
+        rows = [r for _, r in comp]
+        c0, c1, r0, r1 = min(cols), max(cols), min(rows), max(rows)
+
+        if kind == _FIXED:
+            fw, fh = policy[1], policy[2]
+            cr = r0
+            while cr <= r1:                # cr is each stamp's bottom row
+                cc = c0
+                while cc <= c1:
+                    out.append(make_object(
+                        name, cc, cr,
+                        min(fw, c1 - cc + 1), min(fh, r1 - cr + 1)))
+                    cc += fw
+                cr += fh
+        elif kind == _BBOX:
+            out.append(make_object(name, c0, r0, c1 - c0 + 1, r1 - r0 + 1))
+        elif kind == _MUSHROOM:
+            # The cap is the top row of the block; its span sets the width, the
+            # block's full height sets h, and the anchor is the bottom-left.
+            cap_cols = [c for c, r in comp if r == r1]
+            cl, cr_ = min(cap_cols), max(cap_cols)
+            out.append(make_object(name, cl, r0, cr_ - cl + 1, r1 - r0 + 1))
+        elif kind == _HRUN:
+            by_row = {}
+            for c, r in comp:
+                by_row.setdefault(r, []).append(c)
+            for r, rcols in by_row.items():
+                for start, length in _runs(rcols):
+                    out.append(make_object(name, start, r, length, 1))
+        elif kind == _VRUN:
+            by_col = {}
+            for c, r in comp:
+                by_col.setdefault(c, []).append(r)
+            for c, crows in by_col.items():
+                for start, length in _runs(crows):
+                    out.append(make_object(name, c, start, 1, length))
+        elif kind == _PIPE:
+            bw, bh = c1 - c0 + 1, r1 - r0 + 1
+            if bw == 2 and bh >= 2:        # vertical -> mouth up (default)
+                out.append(make_object(name, c0, r0, 2, bh, PIPE_FLAG_U))
+            elif bh == 2 and bw >= 2:      # horizontal -> mouth right
+                out.append(make_object(name, c0, r1, 2, bw, PIPE_FLAG_R))
+            else:                          # malformed -> leave as 1x1 cells
+                for col, row in comp:
+                    out.append(make_object(name, col, row))
 
 
 def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
@@ -172,6 +367,8 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
     objects = []
     unknown_glyphs = {}
     goal_cells = []
+    # name -> set of (col, row) cells, coalesced into multi-tile objects below.
+    obj_cells = {}
 
     for row_game, line in enumerate(rows):
         for col, ch in enumerate(line):
@@ -200,7 +397,14 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
                 # doesn't make it into the .swe" symptom.
                 goal_cells.append((col, row_game))
                 continue
-            objects.append(make_object(name, col, row_game))
+            obj_cells.setdefault(name, set()).add((col, row_game))
+
+    # Coalesce same-glyph cells back into correctly-sized multi-tile objects
+    # (a 2x2 Thwomp -> one object, not four; an N-wide Mushroom Platform -> one
+    # platform, not N tiny whole mushrooms; a 2-wide pipe -> one pipe). Objects
+    # with no policy fall through to one 1x1 object per cell. See coalesce().
+    for name, cells in obj_cells.items():
+        coalesce(name, cells, objects)
 
     # Recover goal_x/goal_y from the painted flagpole. goal_x is stored in
     # TENTHS of a tile (both build_metadata in json_to_swe and normalize_level
