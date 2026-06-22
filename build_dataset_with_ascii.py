@@ -2,8 +2,11 @@
 """
 build_dataset_with_ascii.py
 ===========================
-Custom local pipeline designed to parse consolidated text files featuring
-tags and mixed structural brackets.
+Build a scene dataset from text files where each level is introduced by a
+"(source_num)" header line and the rows below it are the ASCII map. Lines of
+"{{{"/"}}}" separators are ignored. Each level is cropped to a 20x20 window
+(best window by tile count, or every window with --sliding_window) and emitted
+as a grid of tile ids.
 """
 
 import argparse
@@ -36,11 +39,16 @@ def load_tileset(path):
     return {ch: idx for idx, ch in enumerate(chars)}, extra_tile
 
 def _pad_rows(rows, width, empty_char):
+    # Pad short levels at the top (and pad every row out to `width`) so the
+    # level stays bottom-aligned in the window -- the ground belongs on the
+    # bottom rows, not floating in the middle.
     pad_rows = max(0, WINDOW_H - len(rows))
     padded = [empty_char * width] * pad_rows + list(rows)
     return [r.ljust(width, empty_char) for r in padded]
 
 def extract_best_window(rows, tile_to_id, extra_tile=EXTRA_TILE, empty_char="-"):
+    """Return the single WINDOW_H x WINDOW_W window with the most non-empty
+    tiles, i.e. the busiest slice of the level."""
     extra_id = tile_to_id.get(extra_tile, 0)
     empty_id = tile_to_id.get(empty_char, 0)
 
@@ -97,8 +105,9 @@ def extract_all_windows(rows, tile_to_id, extra_tile=EXTRA_TILE, stride=1, empty
 
 def parse_source_file(file_path):
     """
-    Parses a file containing raw '' annotations, isolating blocks
-    of map data and discarding structural wrappers (e.g., {{{, }}}).
+    Split a file into per-level row lists keyed by their "(source_num)" header,
+    discarding the {{{ / }}} separator lines. Files with no headers are returned
+    as a single "source_0" level.
     """
     text = Path(file_path).read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -114,40 +123,36 @@ def parse_source_file(file_path):
         if not cleaned_line or cleaned_line.startswith("{{{") or cleaned_line.startswith("}}}"):
             continue
             
-        # FIXED: Correctly matches using escaped square brackets \[ and \]. No parentheses mismatch.
+        # Match a "(source_num)" header, capturing the id and anything that
+        # follows it on the same line.
         match = re.match(r'^\s*\(([^)]*)\)(.*)', line)
-        
+
         if match:
-            # Save the prior map source tracking if valid
+            # Flush the previous level before starting a new one.
             if current_source and current_rows:
                 levels[current_source] = current_rows
-                
+
             source_num = match.group(1)
             current_source = f"source_{source_num}"
-            
-            # Grab only the remaining map section explicitly trailing the header tag
+
+            # Keep any map data that trails the header on the same line.
             map_part = match.group(2)
-            # If there's map data on the tag line, keep it, preserving structural spacing
             if map_part.strip():
                 current_rows = [map_part]
             else:
                 current_rows = []
         else:
-            # Continue appending lines to the active tracking source
+            # Another row of the current level.
             if current_source is not None:
                 current_rows.append(line)
 
-    # Save the final trailing segment remaining at EOF
+    # Flush the last level at EOF.
     if current_source and current_rows:
         levels[current_source] = current_rows
 
-    if not levels:
-        rows = []
-        for line in lines:
-            rows.append(line)
-
-        if rows:
-            levels["source_0"] = rows
+    # No "(source_num)" headers anywhere: treat the whole file as one level.
+    if not levels and lines:
+        levels["source_0"] = lines
 
     return levels
 
@@ -180,13 +185,11 @@ def collect_input_files(input_path):
     sys.exit(f"ERROR: Input path not found: {input_path}")
 
 def detect_empty_char(tileset_path):
+    # Prefer a literal space if the tileset defines one, otherwise fall back
+    # to '-' (the VGLC empty-tile glyph).
     with open(tileset_path, encoding="utf-8") as f:
         tiles = json.load(f)["tiles"]
-    if " " in tiles:
-        return " "
-    if "-" in tiles:
-        return "-"
-    return "-"
+    return " " if " " in tiles else "-"
 
 
 def load_converter(filename, module_name):
@@ -216,11 +219,12 @@ def main():
                         help=f"Step size (in tiles) between windows when --sliding_window is active. Default: {WINDOW_W} (window width, no overlap).")
     args = parser.parse_args()
 
+    # --convert_to_extended needs the extended glyphs; if the caller left the
+    # base smb tileset in place, quietly point it at extended_tiles.json.
     tileset_path = args.tileset
     if args.convert_to_extended and tileset_path == os.path.join(HERE, "smb.json"):
         tileset_path = os.path.join(HERE, "extended_tiles.json")
     tile_to_id, extra_tile = load_tileset(tileset_path)
-
 
     default_empty_char = detect_empty_char(tileset_path)
 
@@ -247,7 +251,6 @@ def main():
                 if converter_mod is not None:
                     rows = converter_mod.convert_level(rows)
                     empty_char = " "
-                    #print("SAMPLE ROW:", repr(rows[10]))  # print a middle row
                 else:
                     rows = [r.rstrip('\r\n') for r in rows]
                     while rows and not rows[0].strip():

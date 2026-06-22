@@ -379,12 +379,9 @@ def obj_anchor(obj: dict):
 
 
 # ---------------------------------------------------------------------------
-# Main viewer window
+# Level normalization + ASCII grid construction
 # ---------------------------------------------------------------------------
 _SLOPE_NAMES = frozenset({"Slight Slope", "Steep Slope"})
-
-
-# ---------------------------------------------------------------------------
 
 
 def normalize_level(lvl):
@@ -529,8 +526,8 @@ def build_ascii_grid(level):
                 for dx in range(w):
                     set_cell(col+dx,row,char)
             elif obj_name == "Big Coin":
-                # Big Coin is being phased out; represent it as a 2x2 cluster
-                # of regular coins instead of its own glyph.
+                # Draw the Big Coin as a 2x2 cluster of regular coins so it
+                # reads as "more than one coin" in the grid.
                 col,row = obj_anchor(obj)
                 coin_char,_,_ = get_meta("Coin")
                 for dx in range(2):

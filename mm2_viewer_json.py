@@ -204,7 +204,7 @@ GROUND_CHAR  = "#"
 UNKNOWN_CHAR = "▒"
 
 # ASCII export replacements: MM2 objects that convert to a different SWE object.
-# Mirrors the approximations in json_to_swe.py OBJ_SWE_IDS.
+# Mirrors the approximations in json_to_swe.py OBJ_ID_MAP.
 ASCII_REPLACEMENTS = {
     "Spike Top":           "s",  # → Spiny
     "Fish Bone":           "~",  # → Cheep Cheep
@@ -373,8 +373,6 @@ def obj_anchor(obj: dict):
 
 
 # ---------------------------------------------------------------------------
-# Main viewer window
-# ---------------------------------------------------------------------------
 # Slope tile iterator
 # ---------------------------------------------------------------------------
 _SLOPE_NAMES = frozenset({"Slight Slope", "Steep Slope"})
@@ -449,10 +447,6 @@ def slope_tiles(obj: dict):
                 base_col + x,
                 base_row + (h - row - 1)
             )
-
-    
-        
-    
 
 
 # ---------------------------------------------------------------------------
@@ -1179,8 +1173,8 @@ class MM2Viewer(tk.Tk):
                             set_cell(col + x, row + y, GROUND_CHAR)
                     continue
                 if obj_name == "Big Coin":
-                    # Big Coin is being phased out; represent it as a 2x2
-                    # cluster of regular coins instead of its own glyph.
+                    # Draw the Big Coin as a 2x2 cluster of regular coins so it
+                    # reads as "more than one coin" in the grid.
                     # force=True since toost's actual sprite only occupies a
                     # single tile, not the 2x2 footprint we want here.
                     coin_char, _, _ = get_meta("Coin")
