@@ -305,6 +305,20 @@ def _build_output_section(num_captions):
     )
 
 
+def build_system_section(num_captions):
+    """The fixed, scene-independent part of the prompt (instructions/task/output).
+
+    This is everything in build_prompt_template() before the per-scene
+    dictionary/metadata/grid placeholders are appended.
+    """
+    return (
+        _PROMPT_INTRO
+        + _build_task_section(num_captions)
+        + "\n\n"
+        + _build_output_section(num_captions)
+    )
+
+
 def build_prompt_template(num_captions):
     """Assemble the full prompt template for the requested number of captions.
 
@@ -313,16 +327,30 @@ def build_prompt_template(num_captions):
     """
     plural = "caption" if num_captions == 1 else "captions"
     return (
-        _PROMPT_INTRO
-        + _build_task_section(num_captions)
-        + "\n\n"
-        + _build_output_section(num_captions)
+        build_system_section(num_captions)
         + "\n\n"
         "Symbol dictionary:\n{dict_string}\n\n\n"
         "Metadata:\n{metadata}\n\n\n"
         "{grid_label}:\n{ascii_grid}\n\n"
         f"Write the JSON array of {num_captions} {plural} now. DO NOT INCLUDE ANY NON-ENGLISH "
         "CHARACTERS, and do not include anything outside the JSON array."
+    )
+
+
+def build_prompt_log_text(num_captions, dict_string, metadata, grid_label, ascii_grid):
+    """Render the prompt as labeled triple-quoted blocks for a human-readable log file."""
+    system_section = build_system_section(num_captions)
+    return (
+        f'SYSTEM_PROMPT = """\n{system_section}\n"""\n\n'
+        f'"""\n'
+        f'Symbol dictionary:\n{dict_string}\n'
+        f'"""\n\n'
+        f'"""\n'
+        f'Metadata:\n{metadata}\n'
+        f'"""\n\n'
+        f'"""\n'
+        f'{grid_label}:\n\n{ascii_grid}\n\n'
+        f'"""\n'
     )
 
 
@@ -808,7 +836,7 @@ def _validate_tileset_match(dataset, id_to_char, tileset_path):
 def generate_captions(dataset_path, tileset_path, output_path, model, url, timeout, retries,
                        grid_format="ascii", tileset_we_path=None, ascii_output_dir=None,
                        backend="ollama", api_key=None, max_tokens=900, max_reprompts=3,
-                       num_captions=5):
+                       num_captions=5, prompt_log_file="MM2_Prompt.txt"):
     prompt_template = build_prompt_template(num_captions)
 
     with open(dataset_path, "r", encoding="utf-8") as f:
@@ -847,6 +875,8 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
     total_reprompts = 0
     reprompted_scenes = {}  # scene name -> number of reprompts it needed
     last_full_prompt = None  # most recent fully-rendered prompt (dict + metadata + grid substituted in)
+    last_metadata = None
+    last_ascii_grid = None
 
     for i, item in enumerate(dataset):
         scene = item["scene"] if isinstance(item, dict) else item
@@ -883,6 +913,8 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
             ascii_grid=ascii_grid,
             metadata=metadata,
         )
+        last_metadata = metadata
+        last_ascii_grid = ascii_grid
 
         print(f"[{i + 1}/{total}] {name} ...", end=" ", flush=True)
         captions = []
@@ -966,15 +998,30 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
             times = "time" if count == 1 else "times"
             print(f"  - {scene_name} (reprompted {count} {times})")
 
-    print("\n" + "=" * 70)
-    if last_full_prompt is not None:
-        print("Final full prompt sent (fully rendered: dictionary, metadata, and grid filled in):")
-        print("=" * 70)
-        print(last_full_prompt)
+    if prompt_log_file:
+        if last_ascii_grid is not None:
+            log_text = build_prompt_log_text(
+                num_captions, dict_string, last_metadata, grid_label, last_ascii_grid
+            )
+        else:
+            log_text = build_prompt_log_text(
+                num_captions, dict_string, "No metadata available.", grid_label,
+                "(no scenes were sent to the LLM this run)",
+            )
+        os.makedirs(os.path.dirname(os.path.abspath(prompt_log_file)) or ".", exist_ok=True)
+        with open(prompt_log_file, "w", encoding="utf-8") as f:
+            f.write(log_text)
+        print(f"\nPrompt log written to {prompt_log_file}")
     else:
-        print("Full prompt template used (no scenes were sent to the LLM this run):")
-        print("=" * 70)
-        print(prompt_template)
+        print("\n" + "=" * 70)
+        if last_full_prompt is not None:
+            print("Final full prompt sent (fully rendered: dictionary, metadata, and grid filled in):")
+            print("=" * 70)
+            print(last_full_prompt)
+        else:
+            print("Full prompt template used (no scenes were sent to the LLM this run):")
+            print("=" * 70)
+            print(prompt_template)
 
 
 def main():
@@ -1090,6 +1137,20 @@ def main():
             "matching --grid-format) sent to the LLM for each scene, one .txt file per scene."
         ),
     )
+    parser.add_argument(
+        "--prompt-log",
+        default="MM2_Prompt.txt",
+        help=(
+            "Write the full rendered prompt (system instructions, symbol dictionary, "
+            "metadata, and ascii grid for the last scene processed) to this .txt file "
+            "at the end of the run. Default: MM2_Prompt.txt"
+        ),
+    )
+    parser.add_argument(
+        "--no-prompt-log",
+        action="store_true",
+        help="Disable writing the prompt log file; print the final prompt to the console instead.",
+    )
     args = parser.parse_args()
 
     for path, label in [(args.dataset, "dataset"), (args.tileset, "tileset")]:
@@ -1139,6 +1200,7 @@ def main():
         max_tokens=args.max_tokens,
         max_reprompts=args.max_reprompts,
         num_captions=args.num_captions,
+        prompt_log_file=None if args.no_prompt_log else args.prompt_log,
     )
 
 
