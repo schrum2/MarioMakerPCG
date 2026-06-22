@@ -1292,11 +1292,19 @@ def build_world(j, *, user, name, desc, date_str, time_str):
 # ---------------------------------------------------------------------------
 
 def encode_swe(level_dict):
-    """level_dict -> .swe file bytes (base64 JSON + HMAC-SHA1 hex)."""
+    """level_dict -> .swe file bytes (base64 JSON + HMAC-SHA1 hex + NUL).
+
+    SMMWE saves with GameMaker's SaveStringToFile (buffer_write(buffer_string))
+    and loads with LoadJSONFromFile (buffer_read(buffer_string)), both of which
+    NUL-terminate the string: every editor-written .swe ends in a single 0x00
+    byte after the 40-char checksum. buffer_read stops at that terminator, so a
+    file WITHOUT it makes the loader read past the buffer and the level silently
+    fails to load. Append the terminator to match the editor's format exactly.
+    """
     payload = json.dumps(level_dict, separators=(",", ":"), ensure_ascii=False)
     b64 = base64.b64encode(payload.encode("utf-8"))
     checksum = hmac.new(SWE_HMAC_KEY, b64, hashlib.sha1).hexdigest()
-    return b64 + checksum.encode("ascii")
+    return b64 + checksum.encode("ascii") + b"\x00"
 
 
 # ---------------------------------------------------------------------------
