@@ -408,6 +408,45 @@ _MM2_SPRITE_CONST = {
     2: "OBJ_2A0",
 }
 
+# ---------------------------------------------------------------------------
+# Autotiling tables for multi-tile *tile-type* structures (ground, pipe,
+# mushroom platform, semisolid, bridge). These objects have NO spritesheet
+# sprite -- toost draws them from the gamestyle tilesheet, picking a different
+# 16px cell per position so the structure reads as one shape (grass top vs.
+# interior, pipe rim vs. body, mushroom cap vs. stem) instead of one repeated
+# cell. Ported verbatim from toost's LevelDrawer.cpp (Setup / DrawGrdCode /
+# DrawTile) so the ascii browser renders them the same way toost.exe does.
+#
+# Ground uses an 8-neighbour bitmask -> GS[] -> tilesheet cell. The 256-entry
+# GS[] table is copied verbatim from LevelDrawer::Setup; each byte packs the
+# cell as (X = byte >> 4, Y = byte & 0x0F). Parsed (not hand-indexed) to avoid
+# transcription drift; if the count isn't 256 the ground autotiler is disabled
+# and '#' falls back to the single interior cell.
+_MM2_GS_RAW = """
+0x0D, 0x4D, 0x1D, 0xAD, 0x3D, 0x9D, 0x2D, 0xCD, 0x6D, 0x5D, 0x8D, 0xED, 0x7D, 0xDD, 0xBD,
+0xFD, 0x0D, 0x4D, 0x1D, 0x2F, 0x3D, 0x9D, 0x2D, 0x4E, 0x6D, 0x5D, 0x8D, 0x0E, 0x7D, 0xDD, 0xBD, 0x8E, 0x0D,
+0x4D, 0x1D, 0xAD, 0x3D, 0x4F, 0x2D, 0x5E, 0x6D, 0x5D, 0x8D, 0xED, 0x7D, 0x1E, 0xBD, 0x9E, 0x0D, 0x4D, 0x1D,
+0x2F, 0x3D, 0x4F, 0x2D, 0x3F, 0x6D, 0x5D, 0x8D, 0x0E, 0x7D, 0x1E, 0xBD, 0xCE, 0x0D, 0x4D, 0x1D, 0xAD, 0x3D,
+0x9D, 0x2D, 0xCD, 0x6D, 0x5D, 0x8F, 0x2E, 0x7D, 0xDD, 0x6E, 0xAE, 0x0D, 0x4D, 0x1D, 0x2F, 0x3D, 0x9D, 0x2D,
+0x4E, 0x6D, 0x5D, 0x8F, 0x5F, 0x7D, 0xDD, 0x6E, 0xEE, 0x0D, 0x4D, 0x1D, 0xAD, 0x3D, 0x4F, 0x2D, 0x5E, 0x6D,
+0x5D, 0x8F, 0x2E, 0xAF, 0x1E, 0x6E, 0x1F, 0x0D, 0x4D, 0x1D, 0x2F, 0x3D, 0x4F, 0x2D, 0x3F, 0x6D, 0x5D, 0x8F,
+0x5F, 0x7D, 0x1E, 0x6E, 0xBF, 0x0D, 0x4D, 0x1D, 0xAD, 0x3D, 0x9D, 0x2D, 0xCD, 0x6D, 0x5D, 0x8D, 0xED, 0xAF,
+0x3E, 0x7E, 0xBE, 0x0D, 0x4D, 0x1D, 0x2F, 0x3D, 0x9D, 0x2D, 0x4E, 0x6D, 0x5D, 0x8D, 0x0E, 0x7D, 0x3E, 0x7E,
+0x0F, 0x0D, 0x4D, 0x1D, 0xAD, 0x3D, 0x4F, 0x2D, 0x5E, 0x6D, 0x5D, 0x8D, 0xED, 0xAF, 0x7F, 0x7E, 0xFE, 0x0D,
+0x4D, 0x1D, 0x2F, 0x3D, 0x4F, 0x2D, 0x3F, 0x6D, 0x5D, 0x8D, 0x0E, 0xAF, 0x7F, 0x7E, 0xCF, 0x0D, 0x4D, 0x1D,
+0xAD, 0x3D, 0x9D, 0x2D, 0xCD, 0x6D, 0x5D, 0x8F, 0x2E, 0xAF, 0x3E, 0x9F, 0xDE, 0x0D, 0x4D, 0x1D, 0x2F, 0x3D,
+0x9D, 0x2D, 0x4E, 0x6D, 0x5D, 0x8F, 0x5F, 0xAF, 0x3E, 0x9F, 0xDF, 0x0D, 0x4D, 0x1D, 0xAD, 0x3D, 0x4F, 0x2D,
+0x5E, 0x6D, 0x5D, 0x8F, 0x2E, 0xAF, 0x7F, 0x9F, 0xEF, 0x0D, 0x4D, 0x1D, 0x2F, 0x3D, 0x4F, 0x2D, 0x3F, 0x6D,
+0x5D, 0x8F, 0x5F, 0xAF, 0x7F, 0x9F, 0x6F
+"""
+_MM2_GROUND_GS = [int(t, 16) for t in re.findall(r"0x[0-9A-Fa-f]{2}", _MM2_GS_RAW)]
+
+# Green pipe cells (PipeLoc[0] in LevelDrawer::Setup), indexed exactly as toost:
+# 0=top mouth, 1=bottom mouth, 2=left mouth, 3=right mouth, 4=horizontal body
+# (1 wide x 2 tall), 5=vertical body (2 wide x 1 tall). Reconstructed pipes are
+# always green (flag PP bits = 0; see mm2_ascii_to_json DEFAULT_FLAG).
+_MM2_PIPE_LOC = [(14, 0), (14, 2), (11, 0), (13, 0), (12, 0), (14, 1)]
+
 
 def _load_mm2_sprite_table():
     """Parse toost's LevelData.hpp ObjectLocation map and load the spritesheet.
@@ -717,6 +756,159 @@ def _mm2_components(grid, tid, consumed, h, w):
     return comps
 
 
+def _mm2_sheet_region(cell, cw, ch, gamestyle, theme=0):
+    """Crop a cw x ch (in tiles) region anchored at tilesheet cell (cx, cy).
+
+    Returns the RGBA crop at native resolution (so it can be alpha-composited
+    over the sky-blue canvas), or None if the tilesheet is unavailable. Used for
+    autotiled structures whose pieces span more than one tilesheet cell (the
+    2-wide pipe rim/body, the 1x2 bridge plank, ...).
+    """
+    sheet = _mm2_get_tilesheet(gamestyle, theme)
+    if sheet is None:
+        return None
+    tw = sheet.width // 16
+    cx, cy = cell
+    return sheet.crop((cx * tw, cy * tw, (cx + cw) * tw, (cy + ch) * tw))
+
+
+def _mm2_paste_region(canvas, region, c, r, cw, ch, ts):
+    """Paste an RGBA tilesheet region covering cw x ch grid cells at (c, r).
+
+    The region is nearest-scaled to the target footprint and alpha-composited,
+    so transparent pixels keep the canvas' sky colour. No-op if region is None.
+    """
+    if region is None:
+        return
+    target = (cw * ts, ch * ts)
+    if region.size != target:
+        region = region.resize(target, Image.NEAREST)
+    canvas.paste(region, (c * ts, r * ts), region)
+
+
+def _mm2_autotile(grid, canvas, consumed, chars, gamestyle, ts):
+    """Render multi-tile tile-structures with edge-aware tiles, marking consumed.
+
+    This is the rendering-side analogue of mm2_ascii_to_json.coalesce(): instead
+    of one flat cell per glyph, it groups the glyph's cells (8-neighbour bitmask
+    for ground, 4-connected components for the rest) and stamps the correct
+    *edge* piece for each position, so a ground field gets grass tops and inner
+    corners, a 2-wide pipe gets a rim + body, a mushroom platform gets a cap +
+    centred stem, a semisolid gets its surface/edge tiles, and a bridge gets its
+    end caps. Cells it draws are marked consumed so the per-cell fallback (pass 2
+    in _render_mm2_samples) skips them. If the gamestyle tilesheet is missing it
+    bails and every glyph keeps the old single-cell rendering.
+    """
+    if not grid or not grid[0]:
+        return
+    if _mm2_get_tilesheet(gamestyle) is None:
+        return
+    h, w = len(grid), len(grid[0])
+    tid_of = {ch: i for i, ch in enumerate(chars)}
+    g_ground = tid_of.get("#")
+    g_pipe = tid_of.get("|")
+    g_mush = tid_of.get("T")
+    g_semi = tid_of.get("k")
+    g_bridge = tid_of.get("=")
+
+    # --- Ground '#': 8-neighbour bitmask -> GS[] tilesheet cell. ---
+    if g_ground is not None and len(_MM2_GROUND_GS) == 256:
+        def is_g(r, c):
+            return 0 <= r < h and 0 <= c < w and grid[r][c] == g_ground
+        for r in range(h):
+            for c in range(w):
+                if grid[r][c] != g_ground or consumed[r][c]:
+                    continue
+                # Bit order matches toost's GetGrdCode (note j increases UP there,
+                # so toost's "up" == our row-1): corners then orthogonals.
+                code = ((int(is_g(r - 1, c - 1)) << 7) | (int(is_g(r - 1, c + 1)) << 6)
+                        | (int(is_g(r + 1, c - 1)) << 5) | (int(is_g(r + 1, c + 1)) << 4)
+                        | (int(is_g(r - 1, c)) << 3) | (int(is_g(r, c - 1)) << 2)
+                        | (int(is_g(r, c + 1)) << 1) | int(is_g(r + 1, c)))
+                v = _MM2_GROUND_GS[code]
+                region = _mm2_sheet_region((v >> 4, v & 0x0F), 1, 1, gamestyle)
+                if region is not None:
+                    _mm2_paste_region(canvas, region, c, r, 1, 1, ts)
+                    consumed[r][c] = True
+
+    # --- Pipe '|': directional rim + body (LevelDrawer case 9, green PP=0). ---
+    if g_pipe is not None:
+        for cells in _mm2_components(grid, g_pipe, consumed, h, w):
+            rs = [p[0] for p in cells]
+            cs = [p[1] for p in cells]
+            r0, r1, c0, c1 = min(rs), max(rs), min(cs), max(cs)
+            bw, bh = c1 - c0 + 1, r1 - r0 + 1
+            if bw == 2 and bh >= 2:           # vertical column -> mouth up
+                rim = _mm2_sheet_region(_MM2_PIPE_LOC[0], 2, 1, gamestyle)
+                body = _mm2_sheet_region(_MM2_PIPE_LOC[5], 2, 1, gamestyle)
+                for r in range(r0, r1 + 1):
+                    _mm2_paste_region(canvas, rim if r == r0 else body, c0, r, 2, 1, ts)
+                    consumed[r][c0] = consumed[r][c0 + 1] = True
+            elif bh == 2 and bw >= 2:         # horizontal run -> mouth right
+                rmouth = _mm2_sheet_region(_MM2_PIPE_LOC[3], 1, 2, gamestyle)
+                body = _mm2_sheet_region(_MM2_PIPE_LOC[4], 1, 2, gamestyle)
+                for c in range(c0, c1 + 1):
+                    _mm2_paste_region(canvas, rmouth if c == c1 else body, c, r0, 1, 2, ts)
+                    consumed[r0][c] = consumed[r0 + 1][c] = True
+            # malformed pipe block: leave to the per-cell fallback (body cell).
+
+    # --- Mushroom Platform 'T': wide cap (top row) + centred stem below. ---
+    if g_mush is not None:
+        for cells in _mm2_components(grid, g_mush, consumed, h, w):
+            r0 = min(p[0] for p in cells)
+            cap_cols = sorted(c for r, c in cells if r == r0)
+            for c in cap_cols:
+                if c == cap_cols[0]:
+                    cell = (3, 2)             # left cap (also the single-cell case)
+                elif c == cap_cols[-1]:
+                    cell = (5, 2)             # right cap
+                else:
+                    cell = (4, 2)             # middle cap
+                _mm2_paste_region(canvas, _mm2_sheet_region(cell, 1, 1, gamestyle), c, r0, 1, 1, ts)
+                consumed[r0][c] = True
+            for r, c in cells:
+                if r == r0:
+                    continue
+                cell = (6, 3) if r == r0 + 1 else (6, 4)   # stem top vs. body
+                _mm2_paste_region(canvas, _mm2_sheet_region(cell, 1, 1, gamestyle), c, r, 1, 1, ts)
+                consumed[r][c] = True
+
+    # --- Semisolid 'k': surface/edge tiles over the whole block (case 16). ---
+    if g_semi is not None:
+        for cells in _mm2_components(grid, g_semi, consumed, h, w):
+            rs = [p[0] for p in cells]
+            cs = [p[1] for p in cells]
+            r0, r1, c0, c1 = min(rs), max(rs), min(cs), max(cs)
+            bh = r1 - r0 + 1
+            for r, c in cells:
+                yy = r - r0
+                if yy == 0:
+                    oy = 3                    # top surface
+                elif yy == 1:
+                    oy = 4
+                elif yy == bh - 1:
+                    oy = 6                    # bottom edge
+                else:
+                    oy = 5                    # interior fill
+                ox = 0 if c == c0 else (2 if c == c1 else 1)
+                _mm2_paste_region(canvas, _mm2_sheet_region((7 + ox, oy), 1, 1, gamestyle), c, r, 1, 1, ts)
+                consumed[r][c] = True
+
+    # --- Bridge '=': single walkable row, end caps by horizontal adjacency. ---
+    if g_bridge is not None:
+        for cells in _mm2_components(grid, g_bridge, consumed, h, w):
+            cellset = set(cells)
+            for r, c in cells:
+                if (r, c - 1) not in cellset:
+                    cell = (0, 2)             # left end (also the lone-plank case)
+                elif (r, c + 1) not in cellset:
+                    cell = (2, 2)             # right end
+                else:
+                    cell = (1, 2)             # middle plank
+                _mm2_paste_region(canvas, _mm2_sheet_region(cell, 1, 1, gamestyle), c, r, 1, 1, ts)
+                consumed[r][c] = True
+
+
 def _render_mm2_samples(sample_indices, output_dir, start_index, prompts, gamestyle=None):
     """Render MM2 scenes, stamping multi-tile sprites across their glyph blocks.
 
@@ -743,6 +935,7 @@ def _render_mm2_samples(sample_indices, output_dir, start_index, prompts, gamest
     _load_mm2_sprite_table()
     cell_tiles = mm2_tiles(gamestyle)         # per-cell RGB fallback, by tile id
     multitile = _mm2_multitile_sprites(gamestyle)
+    chars, _ = _mm2_glyph_objids()            # tile id -> glyph, for autotiling
     n = len(cell_tiles)
 
     first_image = None
@@ -787,6 +980,12 @@ def _render_mm2_samples(sample_indices, output_dir, start_index, prompts, gamest
                 for y in range(rr0, rr0 + th):
                     for x in range(rc0, rc0 + tw):
                         consumed[y][x] = True
+
+        # Pass 1b: autotile multi-tile *tile-type* structures (ground edges,
+        # pipe rim/body, mushroom cap/stem, semisolid surface, bridge caps) so
+        # they read as one shape instead of a repeated cell. Runs after the
+        # sprite stamps so an overflowing boss sprite still takes priority.
+        _mm2_autotile(grid, canvas, consumed, chars, gamestyle, ts)
 
         # Pass 2: per-cell fitted tiles for everything not already stamped.
         for r in range(h):
