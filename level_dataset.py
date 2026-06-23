@@ -348,21 +348,19 @@ def mm_tiles(game):
 #
 # Unlike the SMB/LR/MM sheets above (a fixed grid of equal tiles indexed by
 # hardcoded (row, col)), MM2 sprites are arbitrary {x, y, w, h} rectangles
-# packed into img/spritesheet.png. toost stores those rectangles in its
-# LevelData.hpp ObjectLocation map, keyed by (OBJ_<id> | <Gamestyle>). To turn
-# a mm2_tileset_we.json glyph into a sprite we chain three existing tables:
+# packed into img/spritesheet.png. To turn a mm2_tileset_we.json glyph into a
+# sprite we chain three tables:
 #
 #   glyph  --OBJ_META-->  object name  --NAME_TO_ID-->  object id
-#   (OBJ_<id> | Gamestyle)  --ObjectLocation-->  (x, y, w, h)  in spritesheet
+#   (object id, gamestyle)  --_MM2_SPRITE_DATA-->  (x, y, w, h)  in spritesheet
 #
-# mm2_viewer_json.py already parses ObjectLocation the same way (it replays
-# toost's drawing_instructions); this mirrors that loader so the ascii browser
-# can show real MM2 art without depending on the tkinter viewer.
+# The rectangles in _MM2_SPRITE_DATA are baked from toost's LevelData.hpp
+# ObjectLocation map (transcribed offline, not parsed at runtime) so the ascii
+# browser ships everything it needs -- it renders real MM2 art with only the
+# committed spritesheet/tilesheet PNGs, no external toost checkout required.
 # ---------------------------------------------------------------------------
 
-# Caches so the 2900-line LevelData.hpp and the spritesheet are read only once.
-_mm2_sprite_table = None   # {combined_id: (x, y, w, h)}
-_mm2_const_map = None      # {"OBJ_0": 0, "SMB1": 12621, ...}
+# Cache so the spritesheet PNG is read only once.
 _mm2_spritesheet = None    # PIL RGBA image of img/spritesheet.png
 _mm2_tilesheet_cache = {}  # {(gamestyle, theme): PIL RGBA of img/tile/<raw>-<theme>.png}
 
@@ -377,9 +375,10 @@ _MM2_GAMESTYLE_RAW = {
 # Tile-type objects (blocks, coins, spikes, ...) are NOT in the spritesheet --
 # toost draws them from the gamestyle/theme tilesheet (img/tile/<raw>-<theme>.png)
 # via DrawTile. These (x, y) 16px cells come from LevelDrawer::Setup's TileLoc
-# table plus the handful of objects drawn by dedicated autotile cases (pipe 9,
-# mushroom platform 14, semisolid 16, bridge 17, vine 64). Used only when an
-# object has no spritesheet entry.
+# table plus the representative cell of a few autotiled objects (pipe 9, mushroom
+# platform 14, semisolid 16, bridge 17, vine 64). For the single-cell per-tile
+# path: the multi-tile ones (pipe/mushroom/semisolid/bridge) get proper edge tiles
+# from _mm2_autotile, and fall back to this one cell only when that can't run.
 _MM2_TILESHEET_CELL = {
     4:  (1, 0),    # Block
     5:  (2, 0),    # ? Block
@@ -402,10 +401,64 @@ _MM2_TILESHEET_CELL = {
 # Fully-surrounded interior ground cell for the '#' glyph: GrdLoc[255] from
 # LevelDrawer::Setup's GS[] table (GS[255] = 0x6F -> X=6, Y=15).
 _MM2_GROUND_CELL = (6, 15)
-# Objects whose spritesheet key is a variant enum rather than OBJ_<id>: the
-# Piranha Plant (id 2) is stored as OBJ_2A0 (down-facing baseline form).
-_MM2_SPRITE_CONST = {
-    2: "OBJ_2A0",
+# Spritesheet rectangles (x, y, w, h in img/spritesheet.png) for every MM2 object
+# id the tileset can reference, per gamestyle. Transcribed from toost's
+# LevelData.hpp ObjectLocation map (the authoritative source) so the renderer no
+# longer needs that 2900-line C++ header at runtime -- it ships the data it needs.
+# Only enemies/items/bosses/platforms live here; pure tile objects (blocks, coins,
+# ground, pipes, ...) are drawn from the tilesheet (_MM2_TILESHEET_CELL / autotile)
+# and are intentionally absent. Piranha Plant (id 2) uses toost's OBJ_2A0 variant
+# (down-facing baseline form). Keep in sync with mm2_tileset_we.json's glyphs.
+_MM2_SPRITE_DATA = {
+    2: {"SMB1": (1168,488,32,16), "SMB3": (1184,856,32,16), "SMW": (896,1168,32,16), "NSMBU": (1136,1120,32,16), "SM3DW": (576,1168,32,16)},
+    0: {"SMB1": (1216,1184,16,16), "SMB3": (656,1232,16,16), "SMW": (1312,1232,16,16), "NSMBU": (1264,736,16,16), "SM3DW": (848,1280,16,16)},
+    1: {"SMB1": (1200,272,16,32), "SMB3": (1184,776,16,32), "SMW": (32,1200,16,32), "NSMBU": (80,1168,16,32), "SM3DW": (1072,704,16,64)},
+    3: {"SMB1": (1200,552,16,32), "SMB3": (1184,952,16,32), "SMW": (192,1200,16,32), "NSMBU": (240,1168,16,32), "SM3DW": (960,288,16,64)},
+    10: {"SMB1": (1200,408,16,16), "SMB3": (688,1232,16,16), "SMW": (1312,1264,16,16), "NSMBU": (1264,768,16,16), "SM3DW": (880,1280,16,16)},
+    11: {"SMB1": (1200,936,16,16), "SMB3": (768,1232,16,16), "SMW": (32,1312,16,16), "NSMBU": (1264,848,16,16), "SM3DW": (976,1280,16,16)},
+    12: {"SMB1": (976,816,32,32), "SMB3": (736,976,32,32), "SMW": (960,1104,32,32), "NSMBU": (1040,544,32,32), "SM3DW": (352,1072,32,32)},
+    13: {"SMB1": (1200,424,16,32), "SMB3": (1184,824,16,32), "SMW": (80,1200,16,32), "NSMBU": (128,1168,16,32), "SM3DW": (1216,288,16,32)},
+    15: {"SMB1": (704,1184,16,16), "SMB3": (1216,1232,16,16), "SMW": (480,1312,16,16), "NSMBU": (32,1264,16,16), "SM3DW": (1296,128,16,16)},
+    18: {"SMB1": (736,1184,16,16), "SMB3": (1248,0,16,16), "SMW": (512,1312,16,16), "NSMBU": (64,1264,16,16), "SM3DW": (1296,160,16,16)},
+    19: {"SMB1": (784,1184,16,16), "SMB3": (1248,48,16,16), "SMW": (560,1312,16,16), "NSMBU": (112,1264,16,16), "SM3DW": (1296,208,16,16)},
+    20: {"SMB1": (816,1184,16,16), "SMB3": (1248,80,16,16), "SMW": (592,1312,16,16), "NSMBU": (144,1264,16,16), "SM3DW": (1296,240,16,16)},
+    24: {"SMB1": (848,1184,16,16), "SMB3": (1248,112,16,16), "SMW": (624,1312,16,16), "NSMBU": (176,1264,16,16), "SM3DW": (1296,272,16,16)},
+    25: {"SMB1": (864,1184,16,16), "SMB3": (1248,128,16,16), "SMW": (640,1312,16,16), "NSMBU": (192,1264,16,16), "SM3DW": (1296,288,16,16)},
+    27: {"SMB1": (864,240,16,176), "SMB3": (1008,0,32,32), "SMW": (864,1168,32,16), "NSMBU": (880,240,16,176), "SM3DW": (896,240,16,176)},
+    28: {"SMB1": (928,1184,16,16), "SMB3": (1248,192,16,16), "SMW": (768,1312,16,16), "NSMBU": (256,1264,16,16), "SM3DW": (1296,352,16,16)},
+    30: {"SMB1": (1168,584,16,32), "SMB3": (1200,952,16,32), "SMW": (208,1200,16,32), "NSMBU": (256,1168,16,32), "SM3DW": (1216,480,16,32)},
+    32: {"SMB1": (560,288,64,64), "SMB3": (64,544,64,64), "SMW": (752,512,64,64), "NSMBU": (64,608,64,64), "SM3DW": (688,576,64,64)},
+    33: {"SMB1": (976,1184,16,16), "SMB3": (1248,240,16,16), "SMW": (816,1312,16,16), "NSMBU": (304,1264,16,16), "SM3DW": (1296,400,16,16)},
+    34: {"SMB1": (1008,1184,16,16), "SMB3": (1248,272,16,16), "SMW": (848,1312,16,16), "NSMBU": (336,1264,16,16), "SM3DW": (1296,432,16,16)},
+    35: {"SMB1": (1072,1184,16,16), "SMB3": (1248,336,16,16), "SMW": (912,1312,16,16), "NSMBU": (400,1264,16,16), "SM3DW": (1296,496,16,16)},
+    36: {"SMB1": (1088,1184,16,16), "SMB3": (1248,352,16,16), "SMW": (928,1312,16,16), "NSMBU": (416,1264,16,16), "SM3DW": (1296,512,16,16)},
+    39: {"SMB1": (624,576,32,32), "SMB3": (1008,32,32,32), "SMW": (1136,96,32,32), "NSMBU": (1040,800,32,32), "SM3DW": (976,256,32,64)},
+    41: {"SMB1": (736,1200,16,16), "SMB3": (1248,512,16,16), "SMW": (1088,1312,16,16), "NSMBU": (576,1264,16,16), "SM3DW": (1296,672,16,16)},
+    42: {"SMB1": (912,896,32,32), "SMB3": (1008,96,32,32), "SMW": (1136,160,32,32), "NSMBU": (1040,864,32,32), "SM3DW": (608,1072,32,32)},
+    45: {"SMB1": (1184,616,16,32), "SMB3": (1184,1000,16,32), "SMW": (224,1200,16,32), "NSMBU": (288,1168,16,32), "SM3DW": (1216,512,16,32)},
+    46: {"SMB1": (1200,648,16,32), "SMB3": (1168,1032,16,32), "SMW": (256,1200,16,32), "NSMBU": (320,1168,16,32), "SM3DW": (960,416,16,64)},
+    47: {"SMB1": (1008,1200,16,16), "SMB3": (1248,624,16,16), "SMW": (1200,1312,16,16), "NSMBU": (688,1264,16,16), "SM3DW": (1296,816,16,16)},
+    48: {"SMB1": (1168,1200,16,16), "SMB3": (1248,784,16,16), "SMW": (1328,32,16,16), "NSMBU": (848,1264,16,16), "SM3DW": (1296,976,16,16)},
+    52: {"SMB1": (1184,680,16,32), "SMB3": (1200,1032,16,32), "SMW": (288,1200,16,32), "NSMBU": (352,1168,16,32), "SM3DW": (1216,736,16,32)},
+    54: {"SMB1": (1232,32,16,16), "SMB3": (1248,880,16,16), "SMW": (1328,128,16,16), "NSMBU": (944,1264,16,16), "SM3DW": (1296,1072,16,16)},
+    55: {"SMB1": (1168,712,16,32), "SMB3": (1184,1064,16,32), "SMW": (320,1200,16,32), "NSMBU": (384,1168,16,32), "SM3DW": (1216,800,16,32)},
+    56: {"SMB1": (1232,96,16,16), "SMB3": (1248,944,16,16), "SMW": (1328,192,16,16), "NSMBU": (1008,1264,16,16), "SM3DW": (1296,1136,16,16)},
+    58: {"SMB1": (1168,744,16,32), "SMB3": (1184,1096,16,32), "SMW": (368,1200,16,32), "NSMBU": (432,1168,16,32), "SM3DW": (1216,896,16,32)},
+    60: {"SMB1": (1232,144,16,16), "SMB3": (1248,992,16,16), "SMW": (1328,240,16,16), "NSMBU": (1056,1264,16,16), "SM3DW": (1296,1184,16,16)},
+    61: {"SMB1": (1232,160,16,16), "SMB3": (1248,1008,16,16), "SMW": (1328,256,16,16), "NSMBU": (1072,1264,16,16), "SM3DW": (1296,1200,16,16)},
+    62: {"SMB1": (96,944,32,32), "SMB3": (192,800,48,48), "SMW": (192,896,48,48), "NSMBU": (1040,928,32,32), "SM3DW": (672,1072,32,32)},
+    67: {"SMB1": (416,944,32,32), "SMB3": (1008,448,32,32), "SMW": (1136,544,32,32), "NSMBU": (224,1040,32,32), "SM3DW": (992,1072,32,32)},
+    68: {"SMB1": (864,512,48,48), "SMB3": (240,800,48,48), "SMW": (240,896,48,48), "NSMBU": (288,848,48,48), "SM3DW": (912,240,48,48)},
+    76: {"SMB1": (1232,272,16,16), "SMB3": (1248,1120,16,16), "SMW": (1328,352,16,16), "NSMBU": (1184,1264,16,16), "SM3DW": (160,1296,16,16)},
+    77: {"SMB1": (672,944,32,32), "SMB3": (1008,704,32,32), "SMW": (1136,800,32,32), "NSMBU": (480,1040,32,32), "SM3DW": (1104,160,32,32)},
+    81: {"SMB1": (1232,320,16,16), "SMB3": (1248,1168,16,16), "SMW": (1328,400,16,16), "NSMBU": (1232,1264,16,16), "SM3DW": (208,1296,16,16)},
+    83: {"SMB1": (320,480,64,64), "SMB3": (624,64,64,64), "SMW": (384,736,64,64), "NSMBU": (688,0,64,64), "SM3DW": (512,672,64,64)},
+    90: {"SMB1": (928,944,32,32), "SMB3": (1008,896,32,32), "SMW": (1136,992,32,32), "NSMBU": (672,1040,32,32), "SM3DW": (1104,352,32,32)},
+    98: {"SMB1": (320,976,32,32), "SMB3": (288,1008,32,32), "SMW": (256,1136,32,32), "NSMBU": (1072,0,32,32), "SM3DW": (1104,608,32,32)},
+    99: {"SMB1": (1232,688,16,16), "SMB3": (160,1248,16,16), "SMW": (1328,640,16,16), "NSMBU": (1280,192,16,16), "SM3DW": (448,1296,16,16)},
+    102: {"SMB1": (1200,488,16,16), "SMB3": (704,1232,16,16), "SMW": (1312,1280,16,16), "NSMBU": (1264,784,16,16), "SM3DW": (896,1280,16,16)},
+    104: {"SMB1": (976,432,32,32), "SMB3": (352,976,32,32), "SMW": (576,1104,32,32), "NSMBU": (1040,160,32,32), "SM3DW": (1072,768,32,32)},
+    105: {"SMB1": (816,0,48,80), "SMB3": (816,160,48,80), "SMW": (864,80,48,80), "NSMBU": (816,400,48,80), "SM3DW": (816,640,48,80)},
 }
 
 # ---------------------------------------------------------------------------
@@ -447,63 +500,63 @@ _MM2_GROUND_GS = [int(t, 16) for t in re.findall(r"0x[0-9A-Fa-f]{2}", _MM2_GS_RA
 # always green (flag PP bits = 0; see mm2_ascii_to_json DEFAULT_FLAG).
 _MM2_PIPE_LOC = [(14, 0), (14, 2), (11, 0), (13, 0), (12, 0), (14, 1)]
 
+# Multi-tile sprite stamping policy (Pass 1 of _render_mm2_samples), keyed by the
+# tileset glyph. Determines what a connected block of the glyph means:
+#
+#   _MM2_BOSS_GLYPHS  -- ONE large entity that may be painted at different sizes
+#       (Bowser at 2x2 or 4x4, a Banzai Bill, ...). The whole connected block is
+#       rendered as a SINGLE sprite scaled to fill it, however big the block is,
+#       because two adjacent same-glyph cells are still one boss, not two.
+#   _MM2_TILED_GLYPHS -- a FIXED-footprint sprite that tiles: a block larger than
+#       the footprint is several separate copies (a 4x2 patch of 't' is TWO 2x2
+#       Thwomps), so the sprite is stamped footprint-by-footprint across the block.
+#
+# Glyphs in neither set keep the default "anchor" behaviour: stamp once when the
+# block fits the footprint, else fall through to the per-cell fitter -- so a row
+# of 1x2 Koopas stays a row of fitted koopas instead of stretched/duplicated ones.
+_MM2_BOSS_GLYPHS = {"X", "x", "!", "Z", "A", ";", "z"}  # Bowser, Bowser Jr, Boom Boom, Banzai Bill, Angry Sun, Clown Car, Goomba's Shoe / Yoshi's Egg
+_MM2_TILED_GLYPHS = {"t", "%", "j", "0", "f"}       # Thwomp, Saw, Swinging Claw, Skewer, Checkpoint
 
-def _load_mm2_sprite_table():
-    """Parse toost's LevelData.hpp ObjectLocation map and load the spritesheet.
 
-    Populates the module-level caches. Mirrors mm2_viewer_json._load_level_data:
-    every ``NAME = NUMBER`` enum constant (OBJ_*, gamestyles, ...) is flattened
-    into _mm2_const_map, then each ``{ OBJ_x [| STYLE], { x, y, w, h } }`` entry
-    is resolved to an integer key. Both files are searched in the same spots the
-    viewer uses; if either is missing the caches stay empty and mm2_tiles() falls
-    back to flat colour tiles.
+def _load_mm2_spritesheet():
+    """Load img/spritesheet.png once into the module-level cache.
+
+    The sprite *coordinates* are baked into _MM2_SPRITE_DATA (no LevelData.hpp
+    needed at runtime); this only opens the PNG they index into. Searched in the
+    same spots the rest of the toolchain uses; if it's missing _mm2_spritesheet
+    stays None and mm2_tiles() falls back to colour tiles.
     """
-    global _mm2_sprite_table, _mm2_const_map, _mm2_spritesheet
-    if _mm2_sprite_table is not None:
+    global _mm2_spritesheet
+    if _mm2_spritesheet is not None:
         return
 
-    _mm2_sprite_table = {}
-    _mm2_const_map = {}
-
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    hpp_path = next((p for p in (
-        os.path.join(script_dir, "LevelData.hpp"),
-        os.path.join(script_dir, "toost_stuff", "LevelData.hpp"),
-        os.path.join(script_dir, "toost_stuff", "src", "LevelData.hpp"),
-        os.path.join(script_dir, "..", "toost", "src", "LevelData.hpp"),
-    ) if os.path.exists(p)), None)
     sheet_path = next((p for p in (
         os.path.join(script_dir, "img", "spritesheet.png"),
         os.path.join(script_dir, "toost_stuff", "img", "spritesheet.png"),
     ) if os.path.exists(p)), None)
-    if not hpp_path or not sheet_path:
-        print(f"mm2_tiles: LevelData.hpp ({hpp_path}) or spritesheet "
-              f"({sheet_path}) not found; falling back to colour tiles.")
+    if not sheet_path:
+        print("mm2_tiles: img/spritesheet.png not found; falling back to colour tiles.")
         return
 
-    with open(hpp_path, "r", encoding="utf-8") as fh:
-        hpp = fh.read()
-
-    # Flatten every `NAME = NUMBER,` enum constant (OBJ_*, SMB1, SMW, ...).
-    for m in re.finditer(r'^\s*([A-Za-z_]\w*)\s*=\s*(-?\d+)\s*,?\s*$', hpp, re.M):
-        _mm2_const_map[m.group(1)] = int(m.group(2))
-
-    # ObjectLocation entries: { NAME [| NAME], { x, y, w, h } }
-    entry_pat = re.compile(
-        r'\{\s*([A-Za-z_]\w*)(?:\s*\|\s*([A-Za-z_]\w*))?\s*,'
-        r'\s*\{\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\}\s*\}'
-    )
-    for a, b, x, y, w, h in entry_pat.findall(hpp):
-        if a not in _mm2_const_map:
-            continue
-        key = _mm2_const_map[a]
-        if b:
-            if b not in _mm2_const_map:
-                continue
-            key |= _mm2_const_map[b]
-        _mm2_sprite_table[key] = (int(x), int(y), int(w), int(h))
-
     _mm2_spritesheet = Image.open(sheet_path).convert("RGBA")
+
+
+def _mm2_sprite_coords(obj_id, gamestyle):
+    """Return the (x, y, w, h) spritesheet rect for obj_id, or None.
+
+    Tries the requested gamestyle first, then the fallback order, since some
+    objects only have art under certain styles. Pure data lookup against
+    _MM2_SPRITE_DATA -- no spritesheet image required.
+    """
+    by_style = _MM2_SPRITE_DATA.get(obj_id)
+    if not by_style:
+        return None
+    for style in (gamestyle,) + tuple(s for s in _MM2_STYLE_FALLBACK if s != gamestyle):
+        coords = by_style.get(style)
+        if coords is not None:
+            return coords
+    return None
 
 
 def _mm2_fit(crop, dim, sky):
@@ -539,19 +592,7 @@ def _mm2_sprite_for_object(obj_id, gamestyle, dim, sky):
     if _mm2_spritesheet is None:
         return None
 
-    styles = (gamestyle,) + tuple(s for s in _MM2_STYLE_FALLBACK if s != gamestyle)
-    obj_const = _mm2_const_map.get(_MM2_SPRITE_CONST.get(obj_id, f"OBJ_{obj_id}"))
-    if obj_const is None:
-        return None
-
-    coords = None
-    for style in styles:
-        gs_const = _mm2_const_map.get(style)
-        if gs_const is None:
-            continue
-        coords = _mm2_sprite_table.get(obj_const | gs_const)
-        if coords is not None:
-            break
+    coords = _mm2_sprite_coords(obj_id, gamestyle)
     if coords is None:
         return None
 
@@ -632,6 +673,27 @@ def _mm2_glyph_objids():
     return chars, char_to_objid
 
 
+def _mm2_glyph_colors():
+    """Return {glyph: (r, g, b)} from OBJ_META's representative colours.
+
+    Used as the graceful fallback when an object's real sprite/tile can't be
+    loaded (e.g. assets missing on a machine without the toost data): a square
+    colour-coded to the object reads far better than a field of identical grey
+    squares. First OBJ_META name per glyph wins, matching _mm2_glyph_objids.
+    """
+    from mm2_json_to_ascii import OBJ_META
+    colors = {}
+    for name, (ch, color_hex, _cat) in OBJ_META.items():
+        if name == "_unknown" or ch in colors:
+            continue
+        hx = color_hex.lstrip("#")
+        try:
+            colors[ch] = (int(hx[0:2], 16), int(hx[2:4], 16), int(hx[4:6], 16))
+        except (ValueError, IndexError):
+            continue
+    return colors
+
+
 def _mm2_native_sprite(obj_id, gamestyle):
     """Return (rgba_sprite, (tw, th)) for an object at its native footprint.
 
@@ -644,18 +706,7 @@ def _mm2_native_sprite(obj_id, gamestyle):
     """
     if _mm2_spritesheet is None or obj_id is None:
         return None
-    obj_const = _mm2_const_map.get(_MM2_SPRITE_CONST.get(obj_id, f"OBJ_{obj_id}"))
-    if obj_const is None:
-        return None
-    styles = (gamestyle,) + tuple(s for s in _MM2_STYLE_FALLBACK if s != gamestyle)
-    coords = None
-    for style in styles:
-        gs_const = _mm2_const_map.get(style)
-        if gs_const is None:
-            continue
-        coords = _mm2_sprite_table.get(obj_const | gs_const)
-        if coords is not None:
-            break
+    coords = _mm2_sprite_coords(obj_id, gamestyle)
     if coords is None:
         return None
     x, y, w, h = coords
@@ -680,8 +731,9 @@ def mm2_tiles(gamestyle=None):
     dim = common_settings.MM2_TILE_PIXEL_DIM
     sky = common_settings.MM2_SKY_COLOR
 
-    _load_mm2_sprite_table()
+    _load_mm2_spritesheet()
     chars, char_to_objid = _mm2_glyph_objids()
+    glyph_colors = _mm2_glyph_colors()
 
     sky_tile = Image.new("RGB", (dim, dim), sky)
     grey_tile = Image.new("RGB", (dim, dim), (128, 128, 128))
@@ -689,6 +741,17 @@ def mm2_tiles(gamestyle=None):
     # solid theme-brown if the tilesheet is missing.
     ground_tile = (_mm2_tile_from_sheet(_MM2_GROUND_CELL, gamestyle, dim, sky)
                    or Image.new("RGB", (dim, dim), (0x8B, 0x69, 0x14)))
+
+    # When the real sprite/tile can't be loaded, show the object's OBJ_META colour
+    # (a recognisable colour-coded square) rather than an anonymous grey one.
+    color_cache = {}
+    def fallback_tile(ch):
+        rgb = glyph_colors.get(ch)
+        if rgb is None:
+            return grey_tile
+        if ch not in color_cache:
+            color_cache[ch] = Image.new("RGB", (dim, dim), rgb)
+        return color_cache[ch]
 
     tile_images = []
     for ch in chars:
@@ -706,7 +769,7 @@ def mm2_tiles(gamestyle=None):
             tile = _mm2_sprite_for_object(obj_id, gamestyle, dim, sky)
             if tile is None and obj_id in _MM2_TILESHEET_CELL:
                 tile = _mm2_tile_from_sheet(_MM2_TILESHEET_CELL[obj_id], gamestyle, dim, sky)
-        tile_images.append(tile if tile is not None else grey_tile)
+        tile_images.append(tile if tile is not None else fallback_tile(ch))
 
     return tile_images
 
@@ -910,19 +973,23 @@ def _mm2_autotile(grid, canvas, consumed, chars, gamestyle, ts):
 
 
 def _render_mm2_samples(sample_indices, output_dir, start_index, prompts, gamestyle=None):
-    """Render MM2 scenes, stamping multi-tile sprites across their glyph blocks.
+    """Render MM2 scenes, reconstructing multi-tile objects from their glyph blocks.
 
     The forward converter (mm2_json_to_ascii) paints each object as a block of its
     glyph -- a Thwomp is a 2x2 patch of 't', a Skewer a 4x4 patch of '0', a
-    Swinging Claw a 3x4 patch of 'j'. Pass 1 finds each connected block of such a
-    glyph and stamps the sprite ONCE scaled to the block's bounding box, then marks
-    the whole box consumed -- so the object takes priority and COVERS any other
-    tile that overlaps its footprint (e.g. a stray block dropped on a skewer). The
-    box may differ from the sprite's nominal footprint (claws are 3x4, not 3x5) and
-    may have holes from overwritten cells; bounding-box stamping handles both. If a
-    block is much larger than one object (merged / generated noise) it is tiled
-    into footprint-sized stamps. Pass 2 fills everything else per-cell (1x1 objects,
-    blocks, ground, and fragments too small to be a real object).
+    Swinging Claw a 3x4 patch of 'j'. Three passes turn those blocks back into art:
+
+      Pass 1 walks each multi-tile sprite's connected blocks and stamps them by
+        policy (see the glyph sets): a boss fills its whole block with one scaled
+        sprite (so a 2x2 and a 4x4 Bowser both render as one boss), a fixed tiled
+        sprite repeats footprint-by-footprint (a 4x2 patch of 't' -> two Thwomps),
+        and anything else anchors a single native-size stamp, deferring oversized
+        blocks (koopa rows, tall poles) to pass 2. Stamped cells are consumed so
+        the object takes priority over whatever it overlaps.
+      Pass 1b autotiles the tile-type structures (ground, pipe, mushroom platform,
+        semisolid, bridge) into edge-aware shapes -- see _mm2_autotile.
+      Pass 2 fills everything still unconsumed per-cell (1x1 objects, blocks, and
+        block fragments too small to be a real object).
 
     Mirrors visualize_samples' contract: with output_dir it saves one PNG per scene
     and returns None; otherwise it returns the first scene's image.
@@ -932,10 +999,11 @@ def _render_mm2_samples(sample_indices, output_dir, start_index, prompts, gamest
     ts = common_settings.MM2_TILE_PIXEL_DIM
     sky = common_settings.MM2_SKY_COLOR
 
-    _load_mm2_sprite_table()
+    _load_mm2_spritesheet()
     cell_tiles = mm2_tiles(gamestyle)         # per-cell RGB fallback, by tile id
     multitile = _mm2_multitile_sprites(gamestyle)
-    chars, _ = _mm2_glyph_objids()            # tile id -> glyph, for autotiling
+    chars, _ = _mm2_glyph_objids()            # tile id -> glyph
+    glyph_of = {i: ch for i, ch in enumerate(chars)}
     n = len(cell_tiles)
 
     first_image = None
@@ -946,7 +1014,14 @@ def _render_mm2_samples(sample_indices, output_dir, start_index, prompts, gamest
         consumed = [[False] * w for _ in range(h)]
 
         # Pass 1: stamp multi-tile sprites across their connected glyph blocks.
+        # Each multi-tile glyph follows one of three policies (see the glyph sets
+        # above): a boss fills its whole block with one scaled sprite; a fixed
+        # tiled sprite repeats footprint-by-footprint across a larger block; and
+        # everything else anchors a single native-size stamp (or defers to pass 2).
         for tid, (sprite, (tw, th)) in multitile.items():
+            glyph = glyph_of.get(tid)
+            is_boss = glyph in _MM2_BOSS_GLYPHS
+            is_tiled = glyph in _MM2_TILED_GLYPHS
             for cells in _mm2_components(grid, tid, consumed, h, w):
                 # Skip single-cell specks (a stray glyph shouldn't trigger a big
                 # cover-up stamp) and scattered noise (require a solid-ish block).
@@ -958,25 +1033,47 @@ def _render_mm2_samples(sample_indices, output_dir, start_index, prompts, gamest
                 bw, bh = c1 - c0 + 1, r1 - r0 + 1
                 if len(cells) < 0.5 * bw * bh:
                     continue
-                # A block bigger than this object in either axis is a row/stack of
-                # separate objects (a line of koopas), a tall pole, or merged blobs
-                # -- stamping would only stretch them, so leave those to pass 2.
+
+                if is_boss:
+                    # One sprite scaled to the ENTIRE block, so a 2x2 and a 4x4
+                    # Bowser each render as a single (correspondingly sized) boss
+                    # instead of bailing to a grid of 1x1 tiles. Covers the bbox.
+                    _mm2_paste_region(canvas, sprite, c0, r0, bw, bh, ts)
+                    for y in range(r0, r1 + 1):
+                        for x in range(c0, c1 + 1):
+                            consumed[y][x] = True
+                    continue
+
+                if is_tiled:
+                    # Fixed footprint: a block larger than tw x th is several
+                    # adjacent copies (two 2x2 Thwomps side by side make a 4x2
+                    # block -> two stamps), so tile footprint-sized stamps across
+                    # it. A block smaller than the footprint clamps to one stamp.
+                    cr = r0
+                    while cr <= r1:
+                        cc = c0
+                        while cc <= c1:
+                            sw, sh = min(tw, c1 - cc + 1), min(th, r1 - cr + 1)
+                            _mm2_paste_region(canvas, sprite, cc, cr, sw, sh, ts)
+                            for y in range(cr, cr + sh):
+                                for x in range(cc, cc + sw):
+                                    consumed[y][x] = True
+                            cc += tw
+                        cr += th
+                    continue
+
+                # Default "anchor": a block bigger than the footprint in either
+                # axis is a row/stack of separate objects (a line of koopas), a
+                # tall pole, or merged noise -- stamping would only stretch them,
+                # so leave those to pass 2.
                 if bw > tw or bh > th:
                     continue
                 # Render the sprite at its NATIVE footprint (no distortion), anchored
-                # bottom-centre over the block. When the data footprint matches the
-                # sprite (Skewer 4x4, Thwomp 2x2) this lands exactly on the block and
-                # covers any holes; when it's smaller (Bowser is painted 2x1 but its
-                # sprite is 3x3, Bowser Jr 2x1 vs 2x2) the sprite renders full size,
-                # overflowing up/sideways and covering those cells -- the object
-                # takes priority over whatever it overlaps.
+                # bottom-centre over the block, overflowing up/sideways to cover any
+                # cells it overlaps (the object takes priority over the backdrop).
                 rc0 = max(0, min(round((c0 + c1) / 2 - (tw - 1) / 2), w - tw))
                 rr0 = max(0, min(r1 - th + 1, h - th))
-                spr = sprite
-                target = (tw * ts, th * ts)
-                if spr.size != target:
-                    spr = spr.resize(target, Image.NEAREST)
-                canvas.paste(spr, (rc0 * ts, rr0 * ts), spr)
+                _mm2_paste_region(canvas, sprite, rc0, rr0, tw, th, ts)
                 for y in range(rr0, rr0 + th):
                     for x in range(rc0, rc0 + tw):
                         consumed[y][x] = True
