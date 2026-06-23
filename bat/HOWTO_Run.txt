@@ -28,7 +28,7 @@
 3. Use ASCII folder to run the full pipeline
 	Once you have a folder full of ASCII files, the rest is simple.
 
-	Command Line: 
+	Command Line:
 	cd bat
-	run_full_pipeline.bat (ascii folder) (model, optional and defaults to qwen2.5:14b)
+	run_full_pipeline.bat (ascii folder) (model, optional and defaults to qwen2.5:14b) (text encoder, either MLM, MiniLM, or GTE)
 	(The other command line arguments are irrelevant and will only mess things up)
