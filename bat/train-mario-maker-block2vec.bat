@@ -41,5 +41,7 @@ python train_block2vec.py --json_file %TILES_JSON% --output_dir "%B2V_OUTPUT%" -
 REM 3) Train the unconditional diffusion model on top of those embeddings.
 python train_diffusion.py --game %GAME% --num_tiles %NUM_TILES% --augment --output_dir "%DIFF_OUTPUT%" --num_epochs 500 --json datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --val_json datasets\%GAME%_LevelsAndCaptions-%TYPE%-validate.json --block_embedding_model_path "%B2V_OUTPUT%" --seed %SEED% < "%YES_FILE%"
 
-REM 4) Generate levels, decoding embedding-space outputs via the same embeddings.
-python run_diffusion.py --model_path "%DIFF_OUTPUT%" --num_samples 100 --save_as_json --output_dir "%SAMPLES_OUTPUT%" --tileset %TILESET% --block_embedding_model_path "%B2V_OUTPUT%"
+REM 4) Generate levels. The trained pipeline stores its own block embeddings and
+REM    decodes its embedding output back to tile space internally, so no embedding
+REM    path is needed here.
+python run_diffusion.py --model_path "%DIFF_OUTPUT%" --num_samples 100 --save_as_json --output_dir "%SAMPLES_OUTPUT%" --tileset %TILESET%

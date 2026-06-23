@@ -4,12 +4,11 @@ import os
 import torch
 import numpy as np
 import random
-from level_dataset import visualize_samples, samples_to_scenes, convert_to_level_format
+from level_dataset import visualize_samples, samples_to_scenes
 from create_ascii_captions import save_level_data
 from create_level_json_data import load_tileset, MM2_EXTRA_TILE
 import util.common_settings as common_settings
 from models.pipeline_loader import get_pipeline
-from models.block2vec_model import Block2Vec
 
 
 def parse_args():
@@ -31,20 +30,12 @@ def parse_args():
     )
     parser.add_argument("--tileset", default="smb.json", help="Path to tileset JSON")
     parser.add_argument("--describe_absence", action="store_true", default=False, help="Caption mentions when tiles are entirely absent")
-    parser.add_argument("--block_embedding_model_path", type=str, default=None,
-                        help="Path to a trained Block2Vec embedding model. Required when the model "
-                             "was trained with block embeddings, so embedding-space outputs are "
-                             "decoded by nearest-embedding instead of channel argmax.")
     return parser.parse_args()
 
 
-def samples_to_ascii(samples, id_to_char, block_embeddings=None):
-    """Convert [batch, channels, height, width] tensors to lists of ASCII row strings.
-
-    With block_embeddings, channels are an embedding vector and the tile id is the
-    nearest embedding; otherwise channels are a one-hot distribution and the tile
-    id is the argmax."""
-    indices = convert_to_level_format(samples, block_embeddings)
+def samples_to_ascii(samples, id_to_char):
+    """Convert [batch, channels, height, width] tensors to lists of ASCII row strings."""
+    indices = torch.argmax(samples, dim=1).cpu().numpy()
     results = []
     for grid in indices:
         rows = ["".join(id_to_char.get(int(idx), "?") for idx in row) for row in grid]
@@ -75,25 +66,20 @@ def generate_levels(args):
     id_to_char = {v: k for k, v in tile_to_id.items()}
     print(f"Tileset: {len(tile_to_id)} tile types from {args.tileset}")
 
-    # Load block embeddings if the model was trained with them. The diffusion model
-    # then outputs embedding vectors (channels == embedding_dim) rather than a
-    # one-hot tile distribution, so every decode path must map vectors back to ids.
-    block_embeddings = None
-    if args.block_embedding_model_path:
-        block2vec = Block2Vec.from_pretrained(args.block_embedding_model_path)
-        block_embeddings = block2vec.get_embeddings().to(device)
-        print(f"Loaded block embeddings from {args.block_embedding_model_path} "
-              f"with dimension {block_embeddings.shape[1]}")
-
     print(f"Loading model from {args.model_path}...")
     pipeline = get_pipeline(args.model_path)
     pipeline.to(device)
 
+    # When the model was trained with block embeddings the pipeline decodes its
+    # own embedding output back to a [batch, num_tiles, H, W] tile distribution
+    # internally (see UnconditionalDDPMPipeline.__call__), so the samples reaching
+    # us are always in tile space and a plain argmax decodes them. The unet itself
+    # has embedding_dim input channels in that case, so compare against the right
+    # number to avoid a spurious warning.
     model_channels = pipeline.unet.config.in_channels
-    expected_channels = block_embeddings.shape[1] if block_embeddings is not None else len(tile_to_id)
-    if model_channels != expected_channels:
-        print(f"Warning: model has {model_channels} channels but expected {expected_channels} "
-              f"({'embedding_dim' if block_embeddings is not None else 'tileset size'})")
+    uses_block_embeddings = getattr(pipeline, "block_embeddings", None) is not None
+    if not uses_block_embeddings and model_channels != len(tile_to_id):
+        print(f"Warning: model has {model_channels} channels but tileset has {len(tile_to_id)} tiles")
 
     ss = pipeline.unet.config.sample_size
     if isinstance(ss, (tuple, list)):
@@ -129,19 +115,19 @@ def generate_levels(args):
         start_index = batch_idx * args.batch_size
 
         if args.output_format in ("ascii", "both"):
-            ascii_levels = samples_to_ascii(samples, id_to_char, block_embeddings)
+            ascii_levels = samples_to_ascii(samples, id_to_char)
             save_ascii_levels(ascii_levels, args.output_dir, start_index)
             print(f"  Saved {len(ascii_levels)} ASCII levels to {args.output_dir}")
 
         if args.output_format in ("image", "both"):
-            visualize_samples(samples, args.output_dir, True, start_index, block_embeddings=block_embeddings)
+            visualize_samples(samples, args.output_dir, True, start_index)
             print(f"  Saved {current_batch_size} level images to {args.output_dir}")
 
     all_samples = torch.cat(all_samples, dim=0)[:total_samples]
     print(f"Done. Generated {total_samples} levels.")
 
     if args.save_as_json:
-        scenes = samples_to_scenes(all_samples, block_embeddings)
+        scenes = samples_to_scenes(all_samples)
         out_path = os.path.join(args.output_dir, "all_levels.json")
         save_level_data(scenes, args.tileset, out_path, False, args.describe_absence, exclude_broken=False)
         print(f"Saved {len(scenes)} captioned scenes to {out_path}")

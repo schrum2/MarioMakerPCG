@@ -46,8 +46,6 @@ def convert_to_level_format(sample, block_embeddings=None):
         
         flat_samples = sample.permute(0, 2, 3, 1).reshape(-1, embedding_dim)
 
-        block_embeddings = block_embeddings.to(flat_samples.device)
-
         # Normalize vectors for cosine similarity
         flat_samples = F.normalize(flat_samples, p=2, dim=1)
         block_embeddings = F.normalize(block_embeddings, p=2, dim=1)

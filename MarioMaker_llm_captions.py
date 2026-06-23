@@ -1113,7 +1113,7 @@ def main():
     parser.add_argument(
         "--grid-format",
         choices=["ascii", "tokens"],
-        default="tokens",
+        default="ascii",
         help=(
             "How the level grid is rendered in the prompt. 'tokens' (default) renders "
             "each cell as a 'T<NN>' token numbered per --tileset-we, which is simpler "
