@@ -47,8 +47,13 @@ def _pad_rows(rows, width, empty_char):
     return [r.ljust(width, empty_char) for r in padded]
 
 def extract_best_window(rows, tile_to_id, extra_tile=EXTRA_TILE, empty_char="-"):
-    """Return the single WINDOW_H x WINDOW_W window with the most non-empty
-    tiles, i.e. the busiest slice of the level."""
+    """Return (best_scene, best_x): the single WINDOW_H x WINDOW_W window with
+    the most non-empty tiles (the busiest slice of the level) and the column
+    offset (in tiles, from the left edge) where that window starts. Returns
+    (None, None) when the level is too small to hold a window.
+
+    best_x is the game-grid column of the window's left edge, which is what the
+    image cropper needs to line the picture up with the tile sample."""
     extra_id = tile_to_id.get(extra_tile, 0)
     empty_id = tile_to_id.get(empty_char, 0)
 
@@ -56,12 +61,13 @@ def extract_best_window(rows, tile_to_id, extra_tile=EXTRA_TILE, empty_char="-")
     width = max((len(r) for r in rows), default=0)
 
     if width < WINDOW_W or height == 0:
-        return None
+        return None, None
 
     padded = _pad_rows(rows, width, empty_char)
 
     best_score = -1
     best_scene = None
+    best_x = None
 
     for x in range(width - WINDOW_W + 1):
         scene = []
@@ -79,11 +85,14 @@ def extract_best_window(rows, tile_to_id, extra_tile=EXTRA_TILE, empty_char="-")
         if score > best_score:
             best_score = score
             best_scene = scene
+            best_x = x
 
-    return best_scene
+    return best_scene, best_x
 
 def extract_all_windows(rows, tile_to_id, extra_tile=EXTRA_TILE, stride=1, empty_char="-"):
-    """Slide a WINDOW_H x WINDOW_W window across the level and return every window.
+    """Slide a WINDOW_H x WINDOW_W window across the level and return every window
+    as a list of (x, scene) pairs, where x is the game-grid column of the
+    window's left edge (needed to crop the matching slice of the level image).
     Air-only windows are dropped so empty gaps don't end up in the dataset."""
     extra_id = tile_to_id.get(extra_tile, 0)
     empty_id = tile_to_id.get(empty_char, 0)
@@ -129,7 +138,7 @@ def extract_all_windows(rows, tile_to_id, extra_tile=EXTRA_TILE, stride=1, empty
                     has_content = True
             scene.append(id_row)
         if has_content:
-            scenes.append(scene)
+            scenes.append((x, scene))
 
     return scenes
 
@@ -233,6 +242,105 @@ def load_converter(filename, module_name):
     return mod
 
 
+# ---------------------------------------------------------------------------
+# Level-image sampling (--with_images)
+#
+# The .bcd export pipeline (bat/extract_levels_to_ascii.bat) renders each level
+# to a PNG that sits in a sibling "images/" folder, one directory up from the
+# ascii input, with the SAME stem as the ascii .txt (e.g. ascii/3000048_overworld.txt
+# <-> images/3000048_overworld.png). Toost renders at exactly 16 px per tile,
+# bottom-left aligned, so a tile window can be cut straight out of the PNG.
+# ---------------------------------------------------------------------------
+
+def _load_pil():
+    try:
+        from PIL import Image
+    except ImportError:
+        sys.exit(
+            "ERROR: --with_images requires Pillow. Install it with:\n"
+            "    pip install Pillow"
+        )
+    return Image
+
+
+class ImageLocator:
+    """Find the rendered PNG for a level, given the ascii input file and the
+    level's stem. Checks the conventional 'images/' folders first, then falls
+    back to a one-time recursive scan of the machine (cached) when allowed."""
+
+    def __init__(self, explicit_dir=None, deep_search=True, search_root=None):
+        self.explicit_dir = Path(explicit_dir) if explicit_dir else None
+        self.deep_search = deep_search
+        self.search_root = Path(search_root) if search_root else None
+        self._index = None  # lowercase filename -> Path, built lazily on first miss
+
+    def _candidate_dirs(self, input_file):
+        p = Path(input_file).resolve()
+        dirs = []
+        if self.explicit_dir:
+            dirs.append(self.explicit_dir)
+        # The export layout puts images one folder out from ascii/, but also
+        # try a few nearby spots so loose folder structures still resolve.
+        dirs.append(p.parent.parent / "images")  # .../<export>/images  (canonical)
+        dirs.append(p.parent / "images")
+        dirs.append(p.parent.parent.parent / "images")
+        dirs.append(p.parent)                     # alongside the ascii file
+        return dirs
+
+    def _build_index(self, input_file):
+        if self._index is not None:
+            return self._index
+        root = self.search_root
+        if root is None:
+            root = Path(Path(input_file).resolve().anchor or Path.home())
+        print(f"  [image-search] No image in the usual spots; indexing PNGs under "
+              f"{root} (one-time, may be slow)...")
+        index = {}
+        for dirpath, _dirnames, filenames in os.walk(root):
+            for fn in filenames:
+                if fn.lower().endswith(".png"):
+                    # First match wins; don't clobber an earlier (shallower) hit.
+                    index.setdefault(fn.lower(), Path(dirpath) / fn)
+        self._index = index
+        print(f"  [image-search] Indexed {len(index)} PNG file(s).")
+        return index
+
+    def find(self, input_file, stem):
+        fname = f"{stem}.png"
+        for d in self._candidate_dirs(input_file):
+            cand = d / fname
+            if cand.is_file():
+                return cand
+        if self.deep_search:
+            return self._build_index(input_file).get(fname.lower())
+        return None
+
+
+def crop_image_window(Image, img, x_tile, ppt, fill=(0, 0, 0)):
+    """Cut a WINDOW_W x WINDOW_H tile region (at `ppt` pixels/tile) out of the
+    level image, bottom-aligned to match the tile sample, starting at column
+    `x_tile`. Regions past the image edge are padded with `fill` so the crop is
+    always exactly the window size."""
+    img = img.convert("RGB")
+    img_w, img_h = img.size
+    box_w, box_h = WINDOW_W * ppt, WINDOW_H * ppt
+
+    left = x_tile * ppt
+    top = img_h - box_h  # bottom-aligned: the ground sits on the bottom rows
+
+    canvas = Image.new("RGB", (box_w, box_h), fill)
+    sl, st = max(0, left), max(0, top)
+    sr, sb = min(img_w, left + box_w), min(img_h, top + box_h)
+    if sr > sl and sb > st:
+        region = img.crop((sl, st, sr, sb))
+        canvas.paste(region, (sl - left, st - top))
+    return canvas
+
+
+def _safe_filename(name):
+    return re.sub(r'[^A-Za-z0-9._-]', '_', name)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build dataset from custom tagged text files.")
     parser.add_argument("--input_file", required=True, help="Path to a .txt file or a folder of .txt files.")
@@ -247,7 +355,30 @@ def main():
                         help="Collect every window position as a separate sample instead of keeping only the best window.")
     parser.add_argument("--stride", type=int, default=WINDOW_W,
                         help=f"Step size (in tiles) between windows when --sliding_window is active. Default: {WINDOW_W} (window width, no overlap).")
+    parser.add_argument("--with_images", action="store_true",
+                        help="For every tile sample, also crop the matching "
+                             f"{WINDOW_W}x{WINDOW_H}-tile region out of the level's "
+                             "rendered PNG and save it next to the dataset. The PNG "
+                             "is the one produced by the .bcd export (same stem as "
+                             "the ascii file, in a sibling 'images/' folder).")
+    parser.add_argument("--image_dir", default=None,
+                        help="Explicit folder to look in for level PNGs (checked "
+                             "before the conventional 'images/' locations).")
+    parser.add_argument("--image_output_dir", default=None,
+                        help="Where to write the cropped sample PNGs when "
+                             "--with_images is set. Default: '<output>_images/'.")
+    parser.add_argument("--no_image_search", action="store_true",
+                        help="Disable the slow machine-wide PNG search fallback; "
+                             "only look in the conventional 'images/' folders.")
+    parser.add_argument("--image_search_root", default=None,
+                        help="Root directory for the machine-wide PNG search "
+                             "fallback. Default: the input drive.")
     args = parser.parse_args()
+
+    if args.with_images and (args.convert_to_vglc or args.convert_to_extended):
+        parser.error("--with_images cannot be combined with --convert_to_vglc / "
+                     "--convert_to_extended: the rendered PNGs match the native "
+                     "MM2 grid, not the converted tile layout.")
 
     # --convert_to_extended needs the extended glyphs; if the caller left the
     # base smb tileset in place, quietly point it at extended_tiles.json.
@@ -264,6 +395,28 @@ def main():
     elif args.convert_to_extended:
         converter_mod = load_converter("mm2view_to_extended.py", "mm2view_to_extended")
 
+    # --with_images setup: locate the rendered PNGs and a place to write crops.
+    Image = None
+    locator = None
+    image_out_dir = None
+    images_saved = 0
+    images_missing = 0
+    # Crop paths in the dataset are stored relative to the output JSON's folder.
+    output_dir_parent = Path(args.output).resolve().parent
+    if args.with_images:
+        Image = _load_pil()
+        locator = ImageLocator(
+            explicit_dir=args.image_dir,
+            deep_search=not args.no_image_search,
+            search_root=args.image_search_root,
+        )
+        if args.image_output_dir:
+            image_out_dir = Path(args.image_output_dir)
+        else:
+            out = Path(args.output)
+            image_out_dir = out.parent / f"{out.stem}_images"
+        image_out_dir.mkdir(parents=True, exist_ok=True)
+
     input_files = collect_input_files(args.input_file)
     dataset = []
     processed = 0
@@ -278,16 +431,36 @@ def main():
             # Prefix with the source filename so names stay unique across files
             full_name = f"{file_stem}/{name}" if len(input_files) > 1 else name
             try:
+                level_img = None    # the level's rendered PNG, if we found one
+                ppt = None          # pixels per tile in that PNG
                 if converter_mod is not None:
                     rows = converter_mod.convert_level(rows)
                     empty_char = " "
                 else:
                     rows = [r.rstrip('\r\n') for r in rows]
+                    # The original (pre-crop) row count maps 1:1 to the image's
+                    # tile rows, so it sets the pixels-per-tile scale.
+                    orig_row_count = len(rows)
                     while rows and not rows[0].strip():
                         rows.pop(0)
                     if len(rows) > WINDOW_H:
                         rows = rows[-WINDOW_H:]
                     empty_char = default_empty_char
+
+                    if args.with_images:
+                        # The PNG shares the ascii file's stem. For "(source_num)"
+                        # files there's no per-source render, so also try the
+                        # source name as a fallback.
+                        img_path = locator.find(input_file, file_stem)
+                        if not img_path and name != file_stem:
+                            img_path = locator.find(input_file, name)
+                        if img_path and orig_row_count > 0:
+                            level_img = Image.open(img_path)
+                            ppt = max(1, round(level_img.size[1] / orig_row_count))
+                        else:
+                            images_missing += 1
+                            print(f"  [no-image] {full_name}: no level image found "
+                                  f"on this machine; sample(s) kept without an image crop.")
 
                 total_chars, unmapped_chars_count, unmapped_chars = check_unmapped_chars(rows, tile_to_id, extra_tile)
                 if total_chars and unmapped_chars_count / total_chars > 0.2:
@@ -299,25 +472,41 @@ def main():
                         f"You are probably using the wrong --tileset for this input."
                     )
 
+                # Collect the windows to emit as (sample_name, x, scene), where x
+                # is the left-edge column used to crop the matching image slice.
                 if args.sliding_window:
-                    scenes = extract_all_windows(rows, tile_to_id, extra_tile=extra_tile, stride=args.stride, empty_char=empty_char)
-                    if not scenes:
+                    windows = extract_all_windows(rows, tile_to_id, extra_tile=extra_tile, stride=args.stride, empty_char=empty_char)
+                    if not windows:
                         print(f"  [SKIP] {full_name} (empty)")
                         skipped += 1
                         continue
-                    for i, scene in enumerate(scenes):
-                        dataset.append({"name": f"{full_name}_{i}", "scene": scene})
-                    processed += len(scenes)
-                    print(f"  [OK] {full_name} ({len(scenes)} windows)")
+                    samples = [(f"{full_name}_{i}", x, scene) for i, (x, scene) in enumerate(windows)]
+                    print(f"  [OK] {full_name} ({len(samples)} windows)")
                 else:
-                    scene = extract_best_window(rows, tile_to_id, extra_tile=extra_tile, empty_char=empty_char)
+                    scene, best_x = extract_best_window(rows, tile_to_id, extra_tile=extra_tile, empty_char=empty_char)
                     if scene is None:
                         print(f"  [SKIP] {full_name} (empty)")
                         skipped += 1
                         continue
-                    dataset.append({"name": full_name, "scene": scene})
-                    processed += 1
+                    samples = [(full_name, best_x, scene)]
                     print(f"  [OK] {full_name}")
+
+                for sample_name, x, scene in samples:
+                    entry = {"name": sample_name, "scene": scene}
+                    if args.with_images:
+                        if level_img is not None and x is not None:
+                            crop = crop_image_window(Image, level_img, x, ppt)
+                            crop_path = image_out_dir / f"{_safe_filename(sample_name)}.png"
+                            crop.save(crop_path)
+                            entry["image"] = os.path.relpath(crop_path, output_dir_parent)
+                            images_saved += 1
+                        else:
+                            entry["image"] = None
+                    dataset.append(entry)
+
+                processed += len(samples)
+                if level_img is not None:
+                    level_img.close()
 
             except Exception as e:
                 print(f"  [ERROR] Failed processing {full_name}: {e}")
@@ -330,6 +519,9 @@ def main():
         json.dump(dataset, f, indent=2)
 
     print(f"\nCompleted! Packaged {processed} items into {output_file} ({skipped} skipped).")
+    if args.with_images:
+        print(f"Image crops: {images_saved} saved to {image_out_dir} "
+              f"({images_missing} level(s) had no image on this machine).")
 
 if __name__ == "__main__":
     main()
