@@ -20,6 +20,8 @@ MM_EXTENDED_TILESET = 'extended_tiles.json'
 # rectangles in toost's LevelData.hpp ObjectLocation map (see mm2_tiles()).
 MM2_TILESET = 'mm2_tileset_we.json'
 MM2_TILE_PIXEL_DIM = 16
+MM2_WIDTH = 20
+MM2_HEIGHT = 20
 # Default game style used to pick sprites (data is generated SMW by default in
 # mm2_ascii_to_json.py). One of: SMB1, SMB3, SMW, NSMBU, SM3DW.
 MM2_GAMESTYLE = 'SMW'

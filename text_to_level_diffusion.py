@@ -16,7 +16,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Generate levels using a trained diffusion model")
     # Model and generation parameters
     parser.add_argument("--model_path", type=str, required=True, help="Path to the trained diffusion model")
-    parser.add_argument("--tileset", default=common_settings.MARIO_TILESET, help="Descriptions of individual tile types")
+    parser.add_argument("--tileset", default=common_settings.MM2_TILESET, help="Descriptions of individual tile types")
     parser.add_argument("--describe_absence", action="store_true", default=False, help="Indicate when there are no occurrences of an item or structure")
     parser.add_argument("--automatic_negative_captions", action="store_true", default=False, help="Automatically create negative captions for prompts so the user doesn't have to")
     parser.add_argument("--automatic_absence_captions", action="store_true", default=False, help="Automatically create absence captions for prompts so the user doesn't have to")
@@ -98,7 +98,7 @@ class InteractiveLevelGeneration(InteractiveGeneration):
         scene = sample_indices[0].tolist()
 
         actual_caption = assign_caption(scene, self.id_to_char, self.char_to_id, self.tile_descriptors, False, self.args.describe_absence)
-        level_width = common_settings.MARIO_WIDTH
+        level_width = common_settings.MM2_WIDTH
 
         compare_score = compare_captions(param_values.get("caption", ""), actual_caption)
         print(f"Comparison score: {compare_score}")
@@ -129,7 +129,7 @@ class InteractiveLevelGeneration(InteractiveGeneration):
         else:
             print("Unknown input: Level not played.")
 
-        samples = visualize_samples(images, game="Mario")
+        samples = visualize_samples(images, game="MM2")
 
         return samples
 
@@ -147,11 +147,11 @@ class InteractiveLevelGeneration(InteractiveGeneration):
 if __name__ == "__main__":
     args = parse_args()
 
-    args.num_tiles = common_settings.MARIO_TILE_COUNT
-    height = common_settings.MARIO_HEIGHT
-    width = common_settings.MARIO_WIDTH
-    args.tile_size = common_settings.MARIO_TILE_PIXEL_DIM
-    args.tileset = common_settings.MARIO_TILESET
+    height = common_settings.MM2_HEIGHT
+    width = common_settings.MM2_WIDTH
+    args.tile_size = common_settings.MM2_TILE_PIXEL_DIM
+    args.tileset = common_settings.MM2_TILESET
+    args.num_tiles = len(extract_tileset(args.tileset)[0])
 
     ig = InteractiveLevelGeneration(args)
     ig.start()
