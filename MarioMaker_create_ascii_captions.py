@@ -3,184 +3,18 @@ import os
 import sys
 import argparse
 
-# Character → human-readable name for the extended tileset (extended_tiles.json)
-EXTENDED_CHAR_NAMES = {
-    "#": "Ground",
-    "B": "Brick",
-    "?": "Question Block",
-    "¢": "Coin",
-    "g": "Enemy",
-    "K": "Koopa",
-    "P": "Piranha Plant",
-    "t": "Thwomp",
-    "^": "Spike",
-    "N": "Block",
-    "³": "Mushroom Platform",
-    "·": "Bridge",
-    "´": "Semisolid Platform",
-    "S": "Stone",
-    "i": "Fire Flower",
-    "V": "Cannon",
-    "|": "Pipe",
-    "↑": "Pipe",
-    "↓": "Pipe",
-    "←": "Pipe",
-    "→": "Pipe",
+# Tags used to describe tile properties rather than identity; everything in a
+# tile's tag list other than these is treated as part of its name.
+PROPERTY_TAGS = {
+    "passable", "solid", "empty", "air", "breakable", "collectable", "enemy",
+    "damaging", "hazard", "moving", "flying", "projectile", "explosive",
+    "shooter", "power-up", "style power-up", "style ride", "platform",
+    "interactive", "climbable", "togglable", "slippery", "falling", "warp",
+    "door", "vehicle",
 }
 
-# Character → human-readable name for the full MM2 tileset (mm2_tileset_full.json)
-MM2_CHAR_NAMES = {
-    # terrain
-    "#": "Ground",
-    "B": "Brick Block",
-    "H": "Hard Block",
-    "?": "Question Block",
-    "h": "Hidden Block",
-    "N": "Note Block",
-    "d": "Donut Block",
-    "I": "Ice Block",
-    "p": "P Block",
-    "O": "On/Off Block",
-    ".": "Dotted-Line Block",
-    "*": "Blinking Block",
-    "^": "Spike Block",
-    "C": "Crate",
-    "S": "Stone Block",
-    "{": "Starting Brick",
-    "=": "Castle Bridge",
-    "T": "Tree",
-    "/": "Slight Slope",
-    "\\": "Steep Slope",
-    # pipes / doors / warps
-    "|": "Pipe",
-    "↑": "Pipe",
-    "↓": "Pipe",
-    "←": "Pipe",
-    "→": "Pipe",
-    "D": "Door",
-    "W": "Warp Box",
-    "k": "Key",
-    "f": "Checkpoint Flag",
-    "G": "Goal",
-    "c": "Clear Pipe",
-    # enemies
-    "g": "Goomba",
-    "K": "Koopa Troopa",
-    "P": "Piranha Plant",
-    "m": "Hammer Bro",
-    "t": "Thwomp",
-    "o": "Bob-omb",
-    "s": "Spiny",
-    "b": "Buzzy Beetle",
-    "L": "Lakitu",
-    "l": "Lakitu's Cloud",
-    "Z": "Banzai Bill",
-    "V": "Bullet Bill Blaster",
-    "y": "Magikoopa",
-    "<": "Spike Top",
-    "u": "Boo",
-    "X": "Bowser",
-    "x": "Bowser Jr.",
-    "@": "Chain Chomp",
-    "~": "Cheep Cheep",
-    "q": "Blooper",
-    "w": "Wiggler",
-    "Y": "Pokey",
-    "e": "Piranha Creeper",
-    "F": "Porcupuffer",
-    "%": "Fish Bone",
-    "&": "Lava Bubble",
-    "r": "Rocky Wrench",
-    ",": "Muncher",
-    "a": "Ant Trooper",
-    "n": "Monty Mole",
-    "R": "Mechakoopa",
-    "!": "Boom Boom",
-    "9": "Dry Bones",
-    "j": "Skipsqueak",
-    "+": "Cinobio",
-    "\xa1": "Cinobic",
-    ";": "Stingby",
-    "A": "Angry Sun",
-    "v": "Charvaargh",
-    "[": "Bully",
-    "1": "Lemmy Koopa",
-    "2": "Morton Koopa Jr.",
-    "3": "Larry Koopa",
-    "4": "Wendy O. Koopa",
-    "5": "Iggy Koopa",
-    "6": "Roy Koopa",
-    "7": "Ludwig von Koopa",
-    # Style Ride slot (id 45): gamestyle-dependent (Yoshi's Egg in
-    # SMW/NSMBU); scenes carry no gamestyle, so the SMB1/SMB3 name is
-    # used here as a baseline. See mm2_json_field_dictionary.txt §6.
-    "\xb5": "Goomba's Shoe",
-    # items / power-ups / collectables
-    "\xa2": "Coin",
-    "$": "Red Coin",
-    "\xa3": "Big Coin",
-    "U": "1-Up Mushroom",
-    "i": "Fire Flower",
-    "\xa4": "Super Star",
-    "M": "Super Mushroom",
-    # Style Power-up slots A/B: gamestyle-dependent (Super Leaf/Cape Feather/
-    # Propeller Mushroom, Frog Suit/Power Balloon/Super Acorn); scenes carry
-    # no gamestyle, so the SMB1 names are used here as a baseline. See
-    # mm2_json_field_dictionary.txt §5.
-    "\xb6": "Big Mushroom",
-    "\xa7": "SMB2 Mushroom",
-    "\xac": "Super Hammer",
-    "\xa6": "P Switch",
-    "\xaf": "POW Block",
-    "\xb1": "Spring",
-    "]": "Cannon Box",
-    "}": "Propeller Box",
-    ")": "Goomba Mask",
-    "\xb0": "Bullet Bill Mask",
-    "\xb2": "Red POW Box",
-    # platforms / moving objects
-    "-": "Lift",
-    "\xb3": "Mushroom Platform",
-    "\xb4": "Semisolid Platform",
-    "\xb7": "Bridge",
-    "\xb8": "Lava Lift",
-    "\xb9": "Snake Block",
-    "\xba": "Track Block",
-    "\xbb": "Conveyor Belt",
-    "\xbc": "Fast Conveyor Belt",
-    "\xbd": "Sprint Platform",
-    "\xbe": "Seesaw",
-    "\xbf": "Swinging Claw",
-    "\xc0": "On/Off Trampoline",
-    "\xc1": "Trampoline",
-    "J": "Jumping Machine",
-    "\xc2": "Half-Collision Platform",
-    "\xc3": "Donut Block Platform",
-    # hazards
-    "\xc4": "Fire Bar",
-    "\xc5": "Saw",
-    "\xc6": "Burner",
-    "\xc7": "Spike Trap",
-    "\xc8": "Spike Ball",
-    "\xc9": "Skewer",
-    "\xca": "Twister",
-    "\xcb": "Icicle",
-    "\xd8": "Cannon",
-    # decorations / vehicles / misc
-    "\xcc": "Cloud",
-    "\xcd": "Vine",
-    "\xce": "Water",
-    "\xcf": "Arrow",
-    "\xd0": "One-Way Wall",
-    "\xd1": "Reel Camera",
-    "\xd2": "Sound Effect",
-    "\xd3": "Player Spawn",
-    "\xd4": "Clown Car",
-    "\xd5": "Koopa Car",
-    "\xd6": "Track",
-    "\xd7": "Starting Arrow",
-    "\xd9": "Exclamation Block",
-}
+# Tiles that represent empty space and should never appear in a caption.
+EMPTY_TAGS = {"empty", "air"}
 
 
 def build_id_to_char(tileset_path):
@@ -193,14 +27,28 @@ def build_id_to_char(tileset_path):
 
 
 def get_char_names(tileset_path):
-    basename = os.path.basename(tileset_path)
-    if "extended_tiles" in basename:
-        return EXTENDED_CHAR_NAMES
-    elif "mm2_tileset_full" in basename:
-        return MM2_CHAR_NAMES
-    else:
-        print(f"Warning: unrecognized tileset '{basename}', defaulting to full MM2 mapping.")
-        return MM2_CHAR_NAMES
+    """Derive char -> human-readable name directly from the tileset file.
+
+    Each tile's value is a tag list whose trailing entries are its name (e.g.
+    ["passable", "collectable", "coin"] -> "Coin"). Reading names straight from
+    the tileset keeps captions aligned with whatever tileset is passed in,
+    instead of a hardcoded table that can silently disagree with the file's
+    actual char assignments (e.g. "c" = coin here vs. "Clear Pipe" in the full
+    set).
+    """
+    with open(tileset_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    char_names = {}
+    for char, tags in data["tiles"].items():
+        if not tags or any(t in EMPTY_TAGS for t in tags):
+            continue
+        # Name = trailing tags that aren't property descriptors. Fall back to
+        # the last tag if a tile is described purely by properties.
+        name_tags = [t for t in tags if t not in PROPERTY_TAGS]
+        name = name_tags[0] if name_tags else tags[-1]
+        char_names[char] = name.title()
+    return char_names
 
 
 def assign_caption(scene, id_to_char, char_names):
@@ -246,7 +94,7 @@ def generate_captions(dataset_path, tileset_path, output_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simple presence-based captions for MM2 ASCII datasets.")
     parser.add_argument("--dataset", required=True, help="Input dataset JSON.")
-    parser.add_argument("--tileset", required=True, help="Tileset JSON (extended_tiles.json or mm2_tileset_full.json).")
+    parser.add_argument("--tileset", required=True, help="Tileset JSON (e.g. mm2_tileset_we.json); names are read from its tile tags.")
     parser.add_argument("--output", required=True, help="Output captioned JSON.")
     args = parser.parse_args()
 
