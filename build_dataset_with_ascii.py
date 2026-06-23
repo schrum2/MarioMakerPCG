@@ -83,8 +83,10 @@ def extract_best_window(rows, tile_to_id, extra_tile=EXTRA_TILE, empty_char="-")
     return best_scene
 
 def extract_all_windows(rows, tile_to_id, extra_tile=EXTRA_TILE, stride=1, empty_char="-"):
-    """Slide a WINDOW_H x WINDOW_W window across the level and return every window."""
+    """Slide a WINDOW_H x WINDOW_W window across the level and return every window.
+    Air-only windows are dropped so empty gaps don't end up in the dataset."""
     extra_id = tile_to_id.get(extra_tile, 0)
+    empty_id = tile_to_id.get(empty_char, 0)
 
     width = max((len(r) for r in rows), default=0)
 
@@ -93,13 +95,28 @@ def extract_all_windows(rows, tile_to_id, extra_tile=EXTRA_TILE, stride=1, empty
 
     padded = _pad_rows(rows, width, empty_char)
 
+    # Make sure the rightmost columns get a window even when stride doesn't
+    # divide evenly -- otherwise the end of the level (e.g. the goal) is lost.
+    last_x = width - WINDOW_W
+    xs = list(range(0, last_x + 1, stride))
+    if xs[-1] != last_x:
+        xs.append(last_x)
+
     scenes = []
-    for x in range(0, width - WINDOW_W + 1, stride):
+    for x in xs:
         scene = []
+        has_content = False
         for y in range(WINDOW_H):
             row_slice = padded[y][x : x + WINDOW_W]
-            scene.append([tile_to_id.get(ch, extra_id) for ch in row_slice])
-        scenes.append(scene)
+            id_row = []
+            for ch in row_slice:
+                tid = tile_to_id.get(ch, extra_id)
+                id_row.append(tid)
+                if tid != empty_id:
+                    has_content = True
+            scene.append(id_row)
+        if has_content:
+            scenes.append(scene)
 
     return scenes
 
