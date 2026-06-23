@@ -1068,7 +1068,7 @@ class LevelDataset(Dataset):
         print(f"Training samples: {len(self.data)}")
 
         # Determine padding length (if not provided)
-        if self.tokenizer and self.max_length is None:
+        if self.tokenizer and self.max_length is None and self.data:
             # Add 5 just in case
             self.max_length = max(len(caption.replace(".", " .").split()) for caption in (item["caption"] for item in self.data)) + 5
 

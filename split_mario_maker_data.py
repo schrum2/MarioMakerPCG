@@ -27,8 +27,19 @@ def main():
     random.shuffle(data)
 
     n = len(data)
-    n_train = int(args.train_pct * n)
-    n_val = int(args.val_pct * n)
+    # int() truncation can zero out val/test entirely on small datasets (e.g. n=6,
+    # val_pct=0.1 -> int(0.6)=0). Round instead, and guarantee at least one sample
+    # for any split with a non-zero requested percentage, borrowing from
+    # whichever split currently has the most so train still gets priority.
+    n_val = max(1, round(args.val_pct * n)) if args.val_pct > 0 and n > 0 else 0
+    n_test = max(1, round(args.test_pct * n)) if args.test_pct > 0 and n > 0 else 0
+    n_train = n - n_val - n_test
+    while n_train < 1 and (n_val > 0 or n_test > 0) and n > 0:
+        if n_val >= n_test and n_val > 0:
+            n_val -= 1
+        elif n_test > 0:
+            n_test -= 1
+        n_train = n - n_val - n_test
 
     train_data = data[:n_train]
     val_data = data[n_train:n_train + n_val]

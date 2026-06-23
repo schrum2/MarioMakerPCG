@@ -52,6 +52,9 @@ def create_dataloaders(json_path, val_json, augment, num_tiles, block_embeddings
             negative_captions=negative_prompt_training,
             block_embeddings=block_embeddings
         )
+        if len(val_dataset) == 0:
+            print(f"WARNING: validation dataset at {val_json} is empty, skipping validation.")
+            val_dataset = None
 
     # Create dataloader
     train_dataloader = DataLoader(
