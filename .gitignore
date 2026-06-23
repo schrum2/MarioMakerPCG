@@ -234,3 +234,5 @@ decode_swe.py
 Claude-API-key.txt
 OpenAI-API-key.txt
 gemini-api-key.txt
+*.cpp
+*.hpp
