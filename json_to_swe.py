@@ -1334,6 +1334,35 @@ def find_companion(path: Path):
     return ow, sub, base
 
 
+def detect_smmwe_user(default="patwick"):
+    """Best-effort author name: the username SMMWE currently has logged in, read
+    from its settings file (%LOCALAPPDATA%\\SMM_WE\\Settings*.dat). That file is a
+    CRLF line list; the username is the lone identifier line -- letters/digits/
+    underscore starting with a letter -- which distinguishes it from the numeric
+    settings, the last-played ``*.swe`` filename (has a dot) and the server URL
+    (has ``://``). Returns `default` if SMMWE isn't installed / no line matches.
+
+    Used so an exported level is attributed to the player loading it rather than
+    a hard-coded name -- SMMWE filters/owns levels by the author field.
+    """
+    import os
+    import re
+    import glob
+    base = os.environ.get("LOCALAPPDATA")
+    if not base:
+        return default
+    for path in sorted(glob.glob(os.path.join(base, "SMM_WE", "Settings*.dat"))):
+        try:
+            text = open(path, encoding="latin1").read()
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", line):
+                return line
+    return default
+
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Convert an MM2 level JSON (or a folder of JSONs) into "
@@ -1341,7 +1370,9 @@ def parse_args():
     )
     p.add_argument("json_path", help="Path to a *_overworld.json, a plain level JSON, or a folder of JSONs")
     p.add_argument("-o", "--output", help="Output .swe path (single-file) or output folder (folder mode)")
-    p.add_argument("--user", default="patwick", help="Author name stored in the level")
+    p.add_argument("--user", default=None,
+                   help="Author name stored in the level (default: the SMMWE "
+                        "logged-in username, else 'patwick')")
     p.add_argument("--name", default=None, help="Level name (default: JSON 'name'); ignored in folder mode")
     p.add_argument("--desc", default=None, help="Description (default: JSON 'description')")
     p.add_argument("--height", type=int, default=FIELD_HEIGHT_TILES,
@@ -1399,6 +1430,9 @@ def main():
     global FIELD_HEIGHT_TILES
     args = parse_args()
     FIELD_HEIGHT_TILES = args.height
+    if args.user is None:
+        args.user = detect_smmwe_user()
+        print(f"Author: {args.user}")
 
     in_path = Path(args.json_path)
 

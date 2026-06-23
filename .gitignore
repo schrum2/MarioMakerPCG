@@ -230,6 +230,7 @@ decode_swe.py
 /kLevels
 /marioLevels
 *.swe
+/runtest/
 Claude-API-key.txt
 OpenAI-API-key.txt
 gemini-api-key.txt

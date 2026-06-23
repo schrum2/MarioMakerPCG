@@ -442,28 +442,35 @@ _REV_LEFT_ANCHOR = frozenset({
 # cap+stem platform; _HRUN/_VRUN split into 1-tall / 1-wide runs; _PIPE rebuilds a
 # 2-wide directional pipe. Names are the canonical CHAR_TO_NAME outputs.
 COALESCE_POLICY = {
-    # fixed 2x2 enemies / objects (each instance is a single 2x2 sprite)
-    "Thwomp":             (_FIXED, 2, 2),
-    "Saw":                (_FIXED, 2, 2),
-    "Chain Chomp":        (_FIXED, 2, 2),
-    "Boom Boom":          (_FIXED, 2, 2),
-    "Banzai Bill":        (_FIXED, 2, 2),
-    "Wiggler":            (_FIXED, 2, 2),
-    "Angry Sun":          (_FIXED, 2, 2),
-    "Bowser":             (_FIXED, 2, 2),
-    "Bowser Jr.":         (_FIXED, 2, 2),
+    # Fixed multi-tile sprites. Footprints confirmed against real toost JSON
+    # exports (runtest/json + bigdoc): Thwomp / Bowser / Big Coin / Checkpoint /
+    # Shoe-Egg are 2x2, Saw is 3x3, Swinging Claw 3x4, Skewer 4x4 (the last
+    # documented in level_dataset.py). Boom Boom / Banzai Bill / Angry Sun /
+    # Bowser Jr / Clown Car had no sample to confirm but are big single bosses
+    # assumed 2x2 -- they are never placed adjacent, so a wrong guess can't
+    # merge neighbours, and clamping makes an isolated <2x2 instance one object.
+    "Thwomp":             (_FIXED, 2, 2),   # confirmed
+    "Bowser":             (_FIXED, 2, 2),   # confirmed
+    "Big Coin":           (_FIXED, 2, 2),   # confirmed
+    "Checkpoint Flag":    (_FIXED, 2, 2),   # confirmed
+    "Goomba's Shoe":      (_FIXED, 2, 2),   # confirmed (decoder: "Shoe Goomba")
+    "Yoshi's Egg":        (_FIXED, 2, 2),   # id 45, SMW/NSMBU form of the above
+    "Saw":                (_FIXED, 3, 3),   # confirmed 3x3 (NOT 2x2)
+    "Swinging Claw":      (_FIXED, 3, 4),   # confirmed
+    "Skewer":             (_FIXED, 4, 4),   # documented (level_dataset.py)
+    "Donut":              (_FIXED, 3, 3),   # id 82 Donut Block Platform, 3x3
+    "Boom Boom":          (_FIXED, 2, 2),   # assumed boss 2x2
+    "Banzai Bill":        (_FIXED, 2, 2),   # assumed 2x2
+    "Angry Sun":          (_FIXED, 2, 2),   # assumed 2x2
+    "Bowser Jr.":         (_FIXED, 2, 2),   # assumed boss 2x2
     "Bowser Jr":          (_FIXED, 2, 2),
-    "Clown Car":          (_FIXED, 2, 2),
-    "Goomba's Shoe":      (_FIXED, 2, 2),
-    "Yoshi's Egg":        (_FIXED, 2, 2),
-    "Checkpoint Flag":    (_FIXED, 2, 2),  # confirmed 2x2 in big doc/1/json
-    "Big Coin":           (_FIXED, 2, 2),  # confirmed 2x2 in big doc/1/json
-    # fixed larger sprites (documented painted footprints in level_dataset.py)
-    "Skewer":             (_FIXED, 4, 4),
-    "Swinging Claw":      (_FIXED, 3, 4),
+    "Clown Car":          (_FIXED, 2, 2),   # assumed 2x2
     # door: 1 wide x 2 tall; grouping the two cells stops build_doors mispairing
     # a single door's halves into a warp
     "Door":               (_FIXED, 1, 2),
+    # Intentionally NOT coalesced: Wiggler (id 52) and Chain Chomp (id 61) are
+    # 1x1 in real data (Chain Chomp only occasionally 2x2) and are commonly
+    # placed in rows, so a fixed 2x2 guess wrongly merged adjacent ones.
     # variable-size platforms / structures
     "Mushroom Platform":  (_MUSHROOM,),    # cap (top row) + centred stem
     "Semisolid Platform": (_BBOX,),
@@ -546,11 +553,28 @@ def coalesce(name, cells, out):
         elif kind == _BBOX:
             out.append(make_object(name, c0, r0, c1 - c0 + 1, r1 - r0 + 1))
         elif kind == _MUSHROOM:
-            # The cap is the top row of the block; its span sets the width, the
-            # block's full height sets h, and the anchor is the bottom-left.
-            cap_cols = [c for c, r in comp if r == r1]
-            cl, cr_ = min(cap_cols), max(cap_cols)
-            out.append(make_object(name, cl, r0, cr_ - cl + 1, r1 - r0 + 1))
+            # A mushroom is a wide cap (top row) over a 1-wide centred stem. Two
+            # stacked mushrooms form one blob with two caps joined by a stem. A
+            # cap is a wide row (>=2 cells) whose row ABOVE is narrow/empty -- the
+            # actual top of a mushroom; a wide row sitting under another wide row
+            # is absorbed into the mushroom above (so overdrawn / overlapping
+            # caps don't split into 1-tall slivers). Each cap's platform hangs
+            # down to just above the next cap below it (or the blob's bottom).
+            rows_by = {}
+            for c, r in comp:
+                rows_by.setdefault(r, []).append(c)
+            cap_rows = sorted(
+                (r for r, cs in rows_by.items()
+                 if len(cs) >= 2 and len(rows_by.get(r + 1, ())) <= 1),
+                reverse=True)
+            if not cap_rows:                       # stem-only speck: treat top
+                cap_rows = [r1]
+            for i, rc in enumerate(cap_rows):
+                cs = rows_by[rc]
+                cl = min(cs)
+                bottom = cap_rows[i + 1] + 1 if i + 1 < len(cap_rows) else r0
+                out.append(make_object(name, cl, bottom,
+                                       max(cs) - cl + 1, rc - bottom + 1))
         elif kind == _HRUN:
             by_row = {}
             for c, r in comp:
@@ -638,6 +662,26 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
         goal_col = 0
         goal_row = 0
 
+    # Recover the player spawn height. The player always starts at the left edge,
+    # standing on top of the left-edge ground column (the start platform the
+    # forward painter injects for overworld maps, cols 0-6). Measure the height
+    # of the contiguous ground stack at the left-most column that has ground.
+    # Without this start_y stays 0, which mm2pipeline.swe maps to one tile BELOW
+    # the bottom ground row -- the player spawns in the void and falls out (every
+    # level's spawn "messed up"). Default to 2 (the common SMM2 spawn) if the
+    # left edge has no ground.
+    ground_at = {(g["x"], g["y"]) for g in ground}
+    start_y = 0
+    for c in (0, 1, 2):
+        h = 0
+        while (c, h) in ground_at:
+            h += 1
+        if h:
+            start_y = h
+            break
+    if start_y == 0:
+        start_y = 2
+
     stem = Path(source_file).stem if source_file else "level"
 
     level = {
@@ -657,7 +701,7 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
         "game_version": "0.0.0",
         "game_version_raw": 0,
         "timer": timer,
-        "start_y": 0,
+        "start_y": start_y,
         "goal_x": goal_col * 10,
         "goal_y": goal_row,
         "clear_condition_type": "None",
