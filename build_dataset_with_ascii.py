@@ -97,10 +97,23 @@ def extract_all_windows(rows, tile_to_id, extra_tile=EXTRA_TILE, stride=1, empty
 
     # Make sure the rightmost columns get a window even when stride doesn't
     # divide evenly -- otherwise the end of the level (e.g. the goal) is lost.
+    # But don't blindly append a window at last_x: when the leftover strip past
+    # the final strided window is only a few tiles, that extra window overlaps
+    # the previous one almost entirely and we get near-duplicate samples. Only
+    # add a fresh edge window when the strip is large enough to carry new
+    # content; otherwise snap the last existing window to the edge so the goal
+    # is still captured without stacking a duplicate.
     last_x = width - WINDOW_W
     xs = list(range(0, last_x + 1, stride))
     if xs[-1] != last_x:
-        xs.append(last_x)
+        # Tail size we consider "worth its own window" -- scales with the
+        # requested density so dense (overlapping) strides keep small tails
+        # while the default no-overlap stride drops slivers.
+        min_tail = max(1, min(stride, WINDOW_W) // 2)
+        if last_x - xs[-1] >= min_tail:
+            xs.append(last_x)
+        else:
+            xs[-1] = last_x
 
     scenes = []
     for x in xs:
