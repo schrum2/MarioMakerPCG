@@ -30,7 +30,7 @@ if "%TYPE%"=="" set TYPE=regular
 if "%GAME%"=="" set GAME=MM
 if "%SEED%"=="" set SEED=0
 if "%TEXT_ENCODER%"=="" set TEXT_ENCODER=MLM
-if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=64
+if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=32
 
 REM Map a text encoder name to its HuggingFace model id.
 set PRETRAINED_MODEL_NAME=
