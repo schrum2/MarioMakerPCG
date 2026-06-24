@@ -12,6 +12,7 @@ Progress is saved every 10 new captions so an interrupted run loses minimal work
 
 import argparse
 import base64
+import io
 import json
 import os
 import sys
@@ -591,6 +592,7 @@ VISION_MODEL_HINTS = (
     "vision", "llava", "bakllava", "moondream",   # Ollama / open multimodal models
     "minicpm-v", "-vl", "vl-", "qwen2-vl", "qwen2.5vl", "qwen2.5-vl",
     "gemma3", "pixtral", "llama4", "mistral-small3",
+    "smolvlm",                                  # HuggingFace SmolVLM / SmolVLM2
 )
 
 
@@ -780,6 +782,71 @@ def call_ollama(prompt, model, url, timeout, retries, image_b64=None, media_type
                 raise RuntimeError(
                     f"Ollama request failed after {retries} attempts: {e}"
                 ) from e
+
+
+# SmolVLM is a local HuggingFace model loaded in-process (not an HTTP API like
+# the other backends). Loading it is expensive, so the processor/model are cached
+# here and reused across every scene in a run; only the first call pays the cost.
+_SMOLVLM_STATE = {}
+
+
+def call_smolvlm(prompt, model, max_tokens, image_b64=None, media_type=None):
+    """Run a local HuggingFace SmolVLM / SmolVLM2 model on the prompt (+ image).
+
+    Unlike the API backends, this loads weights into local memory via transformers
+    and runs generation in-process. The model is loaded once and cached in
+    _SMOLVLM_STATE, keyed by model name, so repeated calls reuse it.
+    """
+    try:
+        import torch
+        from PIL import Image
+        from transformers import AutoProcessor, AutoModelForImageTextToText
+    except ImportError as e:
+        raise RuntimeError(
+            "The smolvlm backend needs torch, transformers, and Pillow:\n"
+            "    pip install torch transformers pillow\n"
+            f"(import failed: {e})"
+        ) from e
+
+    if _SMOLVLM_STATE.get("model_name") != model:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.bfloat16 if device == "cuda" else torch.float32
+        print(f"  [smolvlm] loading {model} on {device} ...", flush=True)
+        processor = AutoProcessor.from_pretrained(model)
+        vlm = AutoModelForImageTextToText.from_pretrained(
+            model, torch_dtype=dtype
+        ).to(device)
+        _SMOLVLM_STATE.update(
+            model_name=model, processor=processor, model=vlm, device=device
+        )
+
+    processor = _SMOLVLM_STATE["processor"]
+    vlm = _SMOLVLM_STATE["model"]
+    device = _SMOLVLM_STATE["device"]
+
+    images = []
+    content = []
+    if image_b64:
+        img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+        images.append(img)
+        content.append({"type": "image"})
+    content.append({"type": "text", "text": prompt})
+
+    messages = [{"role": "user", "content": content}]
+    chat = processor.apply_chat_template(messages, add_generation_prompt=True)
+    inputs = processor(
+        text=chat, images=images or None, return_tensors="pt"
+    ).to(device)
+
+    with torch.no_grad():
+        # do_sample=False -> greedy/deterministic, matching the temperature=0 the
+        # API backends use.
+        gen = vlm.generate(**inputs, max_new_tokens=max_tokens, do_sample=False)
+
+    decoded = processor.batch_decode(
+        gen[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True
+    )
+    return decoded[0].strip() if decoded else ""
 
 
 def find_non_ascii_chars(captions):
@@ -1056,6 +1123,9 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                 elif backend == "gemini":
                     raw = call_gemini(active_prompt, model, api_key, max_tokens, timeout,
                                       retries, image_b64=image_b64, media_type=media_type)
+                elif backend == "smolvlm":
+                    raw = call_smolvlm(active_prompt, model, max_tokens,
+                                       image_b64=image_b64, media_type=media_type)
                 else:
                     raw = call_ollama(active_prompt, model, url, timeout, retries,
                                       image_b64=image_b64, media_type=media_type)
@@ -1094,6 +1164,9 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
             captions.append(deterministic)
 
         entry = {"name": name, "scene": scene}
+        image_rel = item.get("image") if isinstance(item, dict) else None
+        if image_rel:
+            entry["image"] = image_rel
         for idx, cap in enumerate(captions):
             entry["caption" if idx == 0 else f"caption{idx}"] = cap
         if deterministic:
@@ -1173,9 +1246,12 @@ def main():
     parser.add_argument("--output", required=True, help="Output captioned JSON.")
     parser.add_argument(
         "--backend",
-        choices=["ollama", "claude", "openai", "gemini"],
+        choices=["ollama", "claude", "openai", "gemini", "smolvlm"],
         default="ollama",
-        help="LLM backend to use. Default: ollama",
+        help=(
+            "LLM backend to use. 'smolvlm' runs a local HuggingFace SmolVLM model "
+            "in-process via transformers (no API key, no server). Default: ollama"
+        ),
     )
     parser.add_argument(
         "--api-key-file",
@@ -1334,6 +1410,7 @@ def main():
         "openai": "gpt-4o",
         "gemini": "gemini-2.5-flash",
         "ollama": "qwen2.5:14b",
+        "smolvlm": "HuggingFaceTB/SmolVLM-Instruct",
     }
     model = args.model or default_models[args.backend]
 
