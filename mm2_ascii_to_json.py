@@ -25,7 +25,7 @@ Usage:
 import json, argparse
 from pathlib import Path
 
-from mm2_json_to_ascii import OBJ_META, GROUND_CHAR
+from mm2_json_to_ascii import OBJ_META, GROUND_CHAR, CAT_ITEM
 
 TILE = 160          # JSON sub-pixel units per tile (160 = 1 tile)
 TILE_CENTER = 80    # real .bcd objects anchor at the tile CENTER (col*160 + 80)
@@ -91,6 +91,12 @@ NAME_TO_ID = {
     "Player": 69, "Clown Car": 42, "Koopa Clown Car": 72, "Track": 59,
     "Starting Arrow": 38, "Cannon": 47, "! Block": 119,
 }
+
+# Blocks that can hold an item in their `cid` (Block=4, ? Block=5, Hidden=29),
+# by the canonical CHAR_TO_NAME names. An item glyph drawn directly above one of
+# these is folded into the block's cid instead of becoming a free item -- the
+# reverse of mm2_json_to_ascii's item-above-block stamping. See ascii_to_level.
+_CONTAINER_BLOCK_NAMES = {"Block", "? Block", "Hidden Block"}
 
 GAMESTYLE_RAW = {
     "smb1": 12621, "smb3": 13133, "smw": 22349, "nsmbu": 21847, "sm3dw": 22323,
@@ -423,11 +429,44 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
                 continue
             obj_cells.setdefault(name, set()).add((col, row_game))
 
+    # Fold an item glyph sitting directly ABOVE a Brick / ? / Hidden block back
+    # into that block's `cid` (the inverse of the forward painter's item-above-
+    # block stamping), rather than emitting a free-floating item object. The
+    # block then round-trips as a container: json_to_bcd packs `cid` into the
+    # .bcd and json_to_swe maps it to the block's sprout. For human-authored
+    # ASCII this also makes "item resting on a block" mean "item inside it".
+    block_cells = set()
+    for bname in _CONTAINER_BLOCK_NAMES:
+        block_cells |= obj_cells.get(bname, set())
+    block_item = {}  # (col, row) of a block -> contained item's MM2 object id
+    for iname in list(obj_cells):
+        meta = OBJ_META.get(iname)
+        if not meta or meta[2] != CAT_ITEM:
+            continue
+        remaining = set()
+        for cell in obj_cells[iname]:
+            below = (cell[0], cell[1] - 1)
+            if below in block_cells and below not in block_item:
+                block_item[below] = NAME_TO_ID[iname]
+            else:
+                remaining.add(cell)
+        obj_cells[iname] = remaining
+
     # Coalesce same-glyph cells back into correctly-sized multi-tile objects
     # (a 2x2 Thwomp -> one object, not four; an N-wide Mushroom Platform -> one
     # platform, not N tiny whole mushrooms; a 2-wide pipe -> one pipe). Objects
     # with no policy fall through to one 1x1 object per cell. See coalesce().
     for name, cells in obj_cells.items():
+        if name in _CONTAINER_BLOCK_NAMES:
+            # Container blocks have no multi-tile policy (one object per cell);
+            # emit them here so the recovered contained-item cid can be attached.
+            for col, row in cells:
+                obj = make_object(name, col, row)
+                cid = block_item.get((col, row))
+                if cid is not None:
+                    obj["cid"] = cid
+                objects.append(obj)
+            continue
         coalesce(name, cells, objects)
 
     # Recover goal_x/goal_y from the painted flagpole. goal_x is stored in

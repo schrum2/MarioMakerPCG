@@ -274,6 +274,49 @@ def get_meta(name: str):
 
 
 # ---------------------------------------------------------------------------
+# Items stored INSIDE a block (mirrors mm2_json_to_ascii.py): the block keeps
+# the contained item's MM2 object id in its `cid`, with no separate objects[]
+# entry. CONTAINER_BLOCK_IDS gates the carriers; CID_ITEM_NAME maps the child id
+# back to an OBJ_META name so it can be drawn one tile above the block.
+# ---------------------------------------------------------------------------
+CONTAINER_BLOCK_IDS = {4, 5, 29}  # Block (brick), ? Block, Hidden Block
+
+CID_ITEM_NAME = {
+    8:   "Coin",
+    10:  "Spring",
+    18:  "P Switch",
+    19:  "POW Block",
+    20:  "Super Mushroom",
+    33:  "1-Up Mushroom",
+    34:  "Fire Flower",
+    35:  "Super Star",
+    44:  "Big Mushroom",      # Style Power-up A (gamestyle-resolved; glyph E)
+    45:  "Goomba's Shoe",     # Style Ride (SMW/NSMBU -> Yoshi's Egg; glyph z)
+    70:  "Big Coin",
+    81:  "SMB2 Mushroom",     # Style Power-up B (gamestyle-resolved; glyph Q)
+    92:  "Red Coin",
+    116: "Super Hammer",
+    127: "Cannon Box",
+    128: "Propeller Box",
+    129: "Goomba Mask",
+    130: "Bullet Bill Mask",
+    131: "Red POW Box",
+}
+
+
+def contained_item_glyph(cid: int, gamestyle_raw: int):
+    """Glyph for the item a block holds in its `cid`, or None for an empty/
+    unrecognized block. Resolved like a free-standing object."""
+    name = CID_ITEM_NAME.get(cid)
+    if name is None:
+        return None
+    glyph, _, _ = get_meta(resolve_obj_name(name, gamestyle_raw))
+    if name in ASCII_REPLACEMENTS:
+        glyph = ASCII_REPLACEMENTS[name]
+    return glyph
+
+
+# ---------------------------------------------------------------------------
 # Pipe direction helpers (flag % 0x80: 0x00=R, 0x20=L, 0x40=U, 0x60=D)
 # ---------------------------------------------------------------------------
 def _pipe_direction(flag: int) -> str:
@@ -1206,6 +1249,23 @@ class MM2Viewer(tk.Tk):
                         flame = []
                     for fx, fy in flame:
                         set_cell(fx, fy, char, only_if_blank=True)
+
+        # Surface any item stored inside a block (the block's `cid`) as the
+        # item's glyph one tile directly above the block. toost renders nothing
+        # there (the item is hidden in the block), so this is a synthetic
+        # annotation: force=True to bypass the occ gate, only_if_blank=True so it
+        # never clobbers terrain/objects resting on the block.
+        for obj in objects:
+            if obj.get("id") not in CONTAINER_BLOCK_IDS:
+                continue
+            glyph = contained_item_glyph(obj.get("cid", -1),
+                                         lvl.get("gamestyle_raw", 0))
+            if glyph is None:
+                continue
+            col, row = obj_anchor(obj)
+            w, h = obj_tile_size(obj)
+            set_cell(col + w // 2, row + h, glyph,
+                     only_if_blank=True, force=True)
 
         # Anything toost actually drew that no object claimed — keeps the
         # silhouette pixel-faithful even where the heuristics fall short.

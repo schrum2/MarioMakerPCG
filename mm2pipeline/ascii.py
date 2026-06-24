@@ -24,6 +24,11 @@ from .tiles import (
     GAMESTYLE_NAME,
     THEME_RAW,
     THEME_NAME,
+    CAT_ITEM,
+    OBJ_META,
+    CONTAINER_BLOCK_IDS,
+    CONTAINER_BLOCK_NAMES,
+    contained_item_glyph,
     resolve_obj_name,
     get_meta,
 )
@@ -292,6 +297,25 @@ def build_ascii_grid(level):
                 for dx in range(w):
                     for dy in range(h):
                         set_cell(col+dx,row+dy,char)
+
+    # Final pass: surface any item stored inside a block (the block's `cid`) as
+    # the item's glyph one tile directly above the block. Drawn last, and only
+    # into a still-empty cell, so it never clobbers terrain/objects resting on
+    # the block (an in-block item normally has air above it anyway).
+    gamestyle_raw = level.get("gamestyle_raw", 0)
+    for obj in objects:
+        if obj.get("id") not in CONTAINER_BLOCK_IDS:
+            continue
+        glyph = contained_item_glyph(obj.get("cid", -1), gamestyle_raw)
+        if glyph is None:
+            continue
+        col, row = obj_anchor(obj)
+        w, h = obj_tile_size(obj)
+        above = row + h               # one tile above the block's top edge
+        target_col = col + w // 2     # centre column (col itself for a 1x1 block)
+        if 0 <= target_col < max_tx and 0 <= above < max_ty \
+                and grid[max_ty - 1 - above][target_col] == " ":
+            set_cell(target_col, above, glyph)
 
     return ["".join(r).rstrip() for r in grid]
 
@@ -641,11 +665,44 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
                 continue
             obj_cells.setdefault(name, set()).add((col, row_game))
 
+    # Fold an item glyph sitting directly ABOVE a Brick / ? / Hidden block back
+    # into that block's `cid` (the inverse of the forward painter's item-above-
+    # block stamping), rather than emitting a free-floating item object. The
+    # block then round-trips as a container: json_to_bcd packs `cid` into the
+    # .bcd and mm2pipeline.swe maps it to the block's sprout. For human-authored
+    # ASCII this also makes "item resting on a block" mean "item inside it".
+    block_cells = set()
+    for bname in CONTAINER_BLOCK_NAMES:
+        block_cells |= obj_cells.get(bname, set())
+    block_item = {}  # (col, row) of a block -> contained item's MM2 object id
+    for iname in list(obj_cells):
+        meta = OBJ_META.get(iname)
+        if not meta or meta[2] != CAT_ITEM:
+            continue
+        remaining = set()
+        for cell in obj_cells[iname]:
+            below = (cell[0], cell[1] - 1)
+            if below in block_cells and below not in block_item:
+                block_item[below] = NAME_TO_ID[iname]
+            else:
+                remaining.add(cell)
+        obj_cells[iname] = remaining
+
     # Coalesce same-glyph cells back into correctly-sized multi-tile objects
     # (a 2x2 Thwomp -> one object, not four; an N-wide Mushroom Platform -> one
     # platform, not N tiny whole mushrooms; a 2-wide pipe -> one pipe). Objects
     # with no policy fall through to one 1x1 object per cell. See coalesce().
     for name, cells in obj_cells.items():
+        if name in CONTAINER_BLOCK_NAMES:
+            # Container blocks have no multi-tile policy (one object per cell);
+            # emit them here so the recovered contained-item cid can be attached.
+            for col, row in cells:
+                obj = make_object(name, col, row)
+                cid = block_item.get((col, row))
+                if cid is not None:
+                    obj["cid"] = cid
+                objects.append(obj)
+            continue
         coalesce(name, cells, objects)
 
     # Recover goal_x/goal_y from the painted flagpole. goal_x is stored in

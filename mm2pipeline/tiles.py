@@ -391,6 +391,42 @@ NAME_TO_ID = {
 }
 
 # ---------------------------------------------------------------------------
+# Items stored INSIDE a block
+# ---------------------------------------------------------------------------
+# An item placed inside a block (Brick / ? Block / Hidden Block) is NOT a
+# separate objects[] entry: the block stores the contained item's MM2 object id
+# in its `cid` field (see mm2pipeline.swe BLOCK_SPROUT_MAP / json_to_bcd, which
+# packs `cid` straight into the .bcd). CONTAINER_BLOCK_IDS gates which objects
+# can carry such a child; CID_ITEM_NAME maps that child id back to an OBJ_META
+# name so the contained item can be drawn with the item's own glyph (one tile
+# above the block in the forward path) or recovered into `cid` on the way back.
+#
+# CID_ITEM_NAME is derived from the item (CAT_ITEM) rows of NAME_TO_ID -- first
+# canonical name per id wins, matching the explicit copy in mm2_json_to_ascii.py.
+CONTAINER_BLOCK_IDS = {4, 5, 29}  # Block (brick), ? Block, Hidden Block
+CONTAINER_BLOCK_NAMES = {"Block", "? Block", "Hidden Block"}
+
+CID_ITEM_NAME = {}
+for _name, _oid in NAME_TO_ID.items():
+    _meta = OBJ_META.get(_name)
+    if _meta and _meta[2] == CAT_ITEM:
+        CID_ITEM_NAME.setdefault(_oid, _name)
+
+
+def contained_item_glyph(cid, gamestyle_raw):
+    """Glyph for the item a block holds in its `cid`, or None for an empty/
+    unrecognized block. Resolved exactly like a free-standing object so the
+    contained item reads identically to one placed in the open."""
+    name = CID_ITEM_NAME.get(cid)
+    if name is None:
+        return None
+    glyph = get_meta(resolve_obj_name(name, gamestyle_raw))[0]
+    if name in ASCII_REPLACEMENTS:
+        glyph = ASCII_REPLACEMENTS[name]
+    return glyph
+
+
+# ---------------------------------------------------------------------------
 # Game style / theme maps (single copy; were duplicated in mm2_ascii_to_json.py
 # and mm2pipeline.swe uses its own SWE-int variants).
 # ---------------------------------------------------------------------------

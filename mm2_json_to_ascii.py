@@ -281,6 +281,61 @@ def get_meta(name: str):
 
 
 # ---------------------------------------------------------------------------
+# Items stored INSIDE a block
+# ---------------------------------------------------------------------------
+# An item placed inside a block (Brick / ? Block / Hidden Block) is NOT a
+# separate objects[] entry: the block stores the contained item's MM2 object id
+# in its `cid` field (see json_to_swe.BLOCK_SPROUT_MAP and json_to_bcd, which
+# packs `cid` straight into the .bcd). CONTAINER_BLOCK_IDS gates which objects
+# can carry such a child; CID_ITEM_NAME maps that child id back to an OBJ_META
+# name so the contained item is drawn with the item's own glyph, one tile
+# directly above the block.
+#
+# CID_ITEM_NAME mirrors the item (CAT_ITEM) rows of NAME_TO_ID in
+# mm2_ascii_to_json.py (id -> first canonical name). The standalone forward
+# script can't import NAME_TO_ID without a circular import, so the mapping is
+# spelled out here; mm2pipeline.tiles derives the same table from NAME_TO_ID.
+CONTAINER_BLOCK_IDS = {4, 5, 29}  # Block (brick), ? Block, Hidden Block
+
+CID_ITEM_NAME = {
+    8:   "Coin",
+    10:  "Spring",
+    18:  "P Switch",
+    19:  "POW Block",
+    20:  "Super Mushroom",
+    33:  "1-Up Mushroom",
+    34:  "Fire Flower",
+    35:  "Super Star",
+    44:  "Big Mushroom",      # Style Power-up A (gamestyle-resolved; glyph E)
+    45:  "Goomba's Shoe",     # Style Ride (SMW/NSMBU -> Yoshi's Egg; glyph z)
+    70:  "Big Coin",
+    81:  "SMB2 Mushroom",     # Style Power-up B (gamestyle-resolved; glyph Q)
+    92:  "Red Coin",
+    116: "Super Hammer",
+    127: "Cannon Box",
+    128: "Propeller Box",
+    129: "Goomba Mask",
+    130: "Bullet Bill Mask",
+    131: "Red POW Box",
+}
+
+
+def contained_item_glyph(cid: int, gamestyle_raw: int):
+    """Glyph for the item a block holds in its `cid`, or None for an empty/
+    unrecognized block. Resolved exactly like a free-standing object so the
+    contained item reads identically to one placed in the open (gamestyle
+    variants via resolve_obj_name, out-of-tileset glyphs via ASCII_REPLACEMENTS).
+    """
+    name = CID_ITEM_NAME.get(cid)
+    if name is None:
+        return None
+    glyph, _, _ = get_meta(resolve_obj_name(name, gamestyle_raw))
+    if name in ASCII_REPLACEMENTS:
+        glyph = ASCII_REPLACEMENTS[name]
+    return glyph
+
+
+# ---------------------------------------------------------------------------
 # Pipe direction helpers (flag % 0x80: 0x00=R, 0x20=L, 0x40=U, 0x60=D)
 # ---------------------------------------------------------------------------
 def _pipe_direction(flag: int) -> str:
@@ -540,6 +595,25 @@ def build_ascii_grid(level):
                 for dx in range(w):
                     for dy in range(h):
                         set_cell(col+dx,row+dy,char)
+
+    # Final pass: surface any item stored inside a block (the block's `cid`) as
+    # the item's glyph one tile directly above the block. Drawn last, and only
+    # into a still-empty cell, so it never clobbers terrain/objects resting on
+    # the block (an in-block item normally has air above it anyway).
+    gamestyle_raw = level.get("gamestyle_raw", 0)
+    for obj in objects:
+        if obj.get("id") not in CONTAINER_BLOCK_IDS:
+            continue
+        glyph = contained_item_glyph(obj.get("cid", -1), gamestyle_raw)
+        if glyph is None:
+            continue
+        col, row = obj_anchor(obj)
+        w, h = obj_tile_size(obj)
+        above = row + h               # one tile above the block's top edge
+        target_col = col + w // 2     # centre column (col itself for a 1x1 block)
+        if 0 <= target_col < max_tx and 0 <= above < max_ty \
+                and grid[max_ty - 1 - above][target_col] == " ":
+            set_cell(target_col, above, glyph)
 
     return ["".join(r).rstrip() for r in grid]
 
