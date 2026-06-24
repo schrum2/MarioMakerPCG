@@ -16,7 +16,7 @@ from create_ascii_captions import assign_caption, save_level_data
 #from LR_create_ascii_captions import save_level_data as lr_save_level_data
 from captions.util import extract_tileset 
 from captions.caption_match import compare_captions
-from captions.LR_caption_match import compare_captions as lr_compare_captions
+#from captions.LR_caption_match import compare_captions as lr_compare_captions
 from tqdm.auto import tqdm
 import util.common_settings as common_settings
 from util.plotter import Plotter, plot_scores_by_width
