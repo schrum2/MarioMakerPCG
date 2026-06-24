@@ -1127,6 +1127,8 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                     raw = call_smolvlm(active_prompt, model, max_tokens,
                                        image_b64=image_b64, media_type=media_type)
                 else:
+                    # ollama, moondream and llava all go through the local Ollama
+                    # server; moondream/llava just pin a particular vision model.
                     raw = call_ollama(active_prompt, model, url, timeout, retries,
                                       image_b64=image_b64, media_type=media_type)
                 captions = parse_captions(raw)
@@ -1246,11 +1248,13 @@ def main():
     parser.add_argument("--output", required=True, help="Output captioned JSON.")
     parser.add_argument(
         "--backend",
-        choices=["ollama", "claude", "openai", "gemini", "smolvlm"],
+        choices=["ollama", "claude", "openai", "gemini", "smolvlm", "moondream", "llava"],
         default="ollama",
         help=(
             "LLM backend to use. 'smolvlm' runs a local HuggingFace SmolVLM model "
-            "in-process via transformers (no API key, no server). Default: ollama"
+            "in-process via transformers (no API key, no server). 'moondream' and "
+            "'llava' are vision models served through the local Ollama server (same "
+            "as 'ollama', but they default to those models). Default: ollama"
         ),
     )
     parser.add_argument(
@@ -1288,7 +1292,10 @@ def main():
             "(pull with: ollama pull qwen2.5:14b; smaller fallback: qwen2.5:7b or llama3.1:8b). "
             "For --backend claude, default: claude-sonnet-4-6. "
             "For --backend openai, default: gpt-4o. "
-            "For --backend gemini, default: gemini-2.5-flash."
+            "For --backend gemini, default: gemini-2.5-flash. "
+            "For --backend moondream, default: moondream "
+            "(pull with: ollama pull moondream). "
+            "For --backend llava, default: llava:7b (pull with: ollama pull llava:7b)."
         ),
     )
     parser.add_argument(
@@ -1411,6 +1418,8 @@ def main():
         "gemini": "gemini-2.5-flash",
         "ollama": "qwen2.5:14b",
         "smolvlm": "HuggingFaceTB/SmolVLM-Instruct",
+        "moondream": "moondream",
+        "llava": "llava:7b",
     }
     model = args.model or default_models[args.backend]
 
