@@ -11,6 +11,7 @@ Progress is saved every 10 new captions so an interrupted run loses minimal work
 """
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -319,15 +320,32 @@ def build_system_section(num_captions):
     )
 
 
-def build_prompt_template(num_captions):
+def build_image_clause():
+    """An instruction block, used only with --with-images, explaining the rendered
+    screenshot that accompanies the text so the model knows to use it."""
+    return (
+        "\n\nYou will also receive a rendered image of this same level region — a "
+        "screenshot of how it looks in-game, covering the exact same area as the grid "
+        "below. Use it to supplement the grid and metadata: disambiguate objects, confirm "
+        "block materials, and read layout the symbols make unclear. The grid and metadata "
+        "remain authoritative for object identity and counts — do not describe anything "
+        "visible only in the image but absent from the grid/metadata, and never mention the "
+        "image itself or that you were shown a picture."
+    )
+
+
+def build_prompt_template(num_captions, image_clause=""):
     """Assemble the full prompt template for the requested number of captions.
 
     Returns a string with {dict_string}, {metadata}, {grid_label}, and
     {ascii_grid} placeholders left intact for the per-scene .format() call.
+    When image_clause is non-empty (--with-images), it is woven into the
+    instructions so the model knows a screenshot accompanies the text.
     """
     plural = "caption" if num_captions == 1 else "captions"
     return (
         build_system_section(num_captions)
+        + image_clause
         + "\n\n"
         "Symbol dictionary:\n{dict_string}\n\n\n"
         "Metadata:\n{metadata}\n\n\n"
@@ -337,9 +355,10 @@ def build_prompt_template(num_captions):
     )
 
 
-def build_prompt_log_text(num_captions, dict_string, metadata, grid_label, ascii_grid):
+def build_prompt_log_text(num_captions, dict_string, metadata, grid_label, ascii_grid,
+                          image_clause=""):
     """Render the prompt as labeled triple-quoted blocks for a human-readable log file."""
-    system_section = build_system_section(num_captions)
+    system_section = build_system_section(num_captions) + image_clause
     return (
         f'SYSTEM_PROMPT = """\n{system_section}\n"""\n\n'
         f'"""\n'
@@ -551,12 +570,59 @@ def load_api_key(api_key_path):
         return f.readline().strip()
 
 
-def call_claude(prompt, model, api_key, max_tokens, timeout, retries):
+# ── Image input (--with-images) ───────────────────────────────────────────────
+
+_IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+# Substrings identifying models that accept image input, used to guard
+# --with-images so an image isn't silently dropped against a text-only model
+# (every current Claude model is multimodal; the local Ollama default is not).
+VISION_MODEL_HINTS = (
+    "claude",                                   # Anthropic (all current models)
+    "gpt-4o", "gpt-4.1", "gpt-4-turbo", "gpt-5",  # OpenAI
+    "o1", "o3", "o4", "chatgpt",
+    "gemini",                                   # Google
+    "vision", "llava", "bakllava", "moondream",   # Ollama / open multimodal models
+    "minicpm-v", "-vl", "vl-", "qwen2-vl", "qwen2.5vl", "qwen2.5-vl",
+    "gemma3", "pixtral", "llama4", "mistral-small3",
+)
+
+
+def model_supports_vision(model):
+    m = model.lower()
+    return any(hint in m for hint in VISION_MODEL_HINTS)
+
+
+def load_image_b64(image_path):
+    """Read an image and return (base64_string, media_type) for the API payload."""
+    ext = os.path.splitext(image_path)[1].lower()
+    media_type = _IMAGE_MEDIA_TYPES.get(ext, "image/png")
+    with open(image_path, "rb") as f:
+        data = base64.standard_b64encode(f.read()).decode("utf-8")
+    return data, media_type
+
+
+def call_claude(prompt, model, api_key, max_tokens, timeout, retries,
+                image_b64=None, media_type=None):
+    if image_b64:
+        content = [
+            {"type": "image", "source": {
+                "type": "base64", "media_type": media_type, "data": image_b64}},
+            {"type": "text", "text": prompt},
+        ]
+    else:
+        content = prompt
     payload = json.dumps({
         "model": model,
         "max_tokens": max_tokens,
         "temperature": 0,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": content}],
     }).encode("utf-8")
 
     for attempt in range(retries):
@@ -586,12 +652,21 @@ def call_claude(prompt, model, api_key, max_tokens, timeout, retries):
                 ) from e
 
 
-def call_openai(prompt, model, api_key, max_tokens, timeout, retries):
+def call_openai(prompt, model, api_key, max_tokens, timeout, retries,
+                image_b64=None, media_type=None):
+    if image_b64:
+        content = [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {
+                "url": f"data:{media_type};base64,{image_b64}"}},
+        ]
+    else:
+        content = prompt
     payload = json.dumps({
         "model": model,
         "max_tokens": max_tokens,
         "temperature": 0,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": content}],
     }).encode("utf-8")
 
     for attempt in range(retries):
@@ -622,9 +697,14 @@ def call_openai(prompt, model, api_key, max_tokens, timeout, retries):
                 ) from e
 
 
-def call_gemini(prompt, model, api_key, max_tokens, timeout, retries):
+def call_gemini(prompt, model, api_key, max_tokens, timeout, retries,
+                image_b64=None, media_type=None):
+    parts = []
+    if image_b64:
+        parts.append({"inline_data": {"mime_type": media_type, "data": image_b64}})
+    parts.append({"text": prompt})
     payload = json.dumps({
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {
             "temperature": 0,
             "maxOutputTokens": max_tokens,
@@ -665,8 +745,8 @@ def call_gemini(prompt, model, api_key, max_tokens, timeout, retries):
                 ) from e
 
 
-def call_ollama(prompt, model, url, timeout, retries):
-    payload = json.dumps({
+def call_ollama(prompt, model, url, timeout, retries, image_b64=None, media_type=None):
+    body = {
         "model": model,
         "prompt": prompt,
         "stream": False,
@@ -674,7 +754,11 @@ def call_ollama(prompt, model, url, timeout, retries):
             "temperature": 0,
             "seed": 42
         },
-    }).encode("utf-8")
+    }
+    if image_b64:
+        # The /api/generate endpoint takes raw base64 strings (no data: prefix).
+        body["images"] = [image_b64]
+    payload = json.dumps(body).encode("utf-8")
 
     for attempt in range(retries):
         try:
@@ -836,11 +920,28 @@ def _validate_tileset_match(dataset, id_to_char, tileset_path):
 def generate_captions(dataset_path, tileset_path, output_path, model, url, timeout, retries,
                        grid_format="ascii", tileset_we_path=None, ascii_output_dir=None,
                        backend="ollama", api_key=None, max_tokens=900, max_reprompts=3,
-                       num_captions=5, prompt_log_file="MM2_Prompt.txt"):
-    prompt_template = build_prompt_template(num_captions)
+                       num_captions=5, prompt_log_file="MM2_Prompt.txt", with_images=False):
+    image_clause = build_image_clause() if with_images else ""
+    prompt_template = build_prompt_template(num_captions, image_clause)
 
     with open(dataset_path, "r", encoding="utf-8") as f:
         dataset = json.load(f)
+
+    # --with-images consumes the per-sample 'image' paths emitted by
+    # build_dataset_with_ascii.py --with_images, stored relative to the dataset
+    # JSON's own folder. Resolve them against that folder.
+    dataset_dir = os.path.dirname(os.path.abspath(dataset_path))
+    if with_images:
+        has_any_image = any(
+            isinstance(it, dict) and it.get("image") for it in dataset
+        )
+        if not has_any_image:
+            print(
+                "ERROR: --with-images was set, but no items in the dataset carry an "
+                "'image' path.\n  Rebuild the dataset with build_dataset_with_ascii.py "
+                "--with_images so each sample gets a cropped PNG, then retry."
+            )
+            sys.exit(1)
 
     id_to_char = build_id_to_char(tileset_path)
     char_names = get_char_names(tileset_path)
@@ -871,6 +972,8 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
     generated = 0
     skipped = 0
     errors = 0
+    images_used = 0
+    images_missing = 0
     all_bad_chars = set()
     total_reprompts = 0
     reprompted_scenes = {}  # scene name -> number of reprompts it needed
@@ -916,7 +1019,26 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         last_metadata = metadata
         last_ascii_grid = ascii_grid
 
-        print(f"[{i + 1}/{total}] {name} ...", end=" ", flush=True)
+        # Resolve this scene's rendered image once (reused across reprompts).
+        image_b64 = None
+        media_type = None
+        image_tag = ""
+        if with_images:
+            image_rel = item.get("image") if isinstance(item, dict) else None
+            if image_rel:
+                image_path = os.path.join(dataset_dir, image_rel)
+                if os.path.isfile(image_path):
+                    image_b64, media_type = load_image_b64(image_path)
+                    image_tag = " [img]"
+                    images_used += 1
+                else:
+                    image_tag = " [img missing]"
+                    images_missing += 1
+            else:
+                image_tag = " [no img]"
+                images_missing += 1
+
+        print(f"[{i + 1}/{total}] {name}{image_tag} ...", end=" ", flush=True)
         captions = []
         try:
             for attempt in range(max_reprompts):
@@ -926,13 +1048,17 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                 last_full_prompt = active_prompt
 
                 if backend == "claude":
-                    raw = call_claude(active_prompt, model, api_key, max_tokens, timeout, retries)
+                    raw = call_claude(active_prompt, model, api_key, max_tokens, timeout,
+                                      retries, image_b64=image_b64, media_type=media_type)
                 elif backend == "openai":
-                    raw = call_openai(active_prompt, model, api_key, max_tokens, timeout, retries)
+                    raw = call_openai(active_prompt, model, api_key, max_tokens, timeout,
+                                      retries, image_b64=image_b64, media_type=media_type)
                 elif backend == "gemini":
-                    raw = call_gemini(active_prompt, model, api_key, max_tokens, timeout, retries)
+                    raw = call_gemini(active_prompt, model, api_key, max_tokens, timeout,
+                                      retries, image_b64=image_b64, media_type=media_type)
                 else:
-                    raw = call_ollama(active_prompt, model, url, timeout, retries)
+                    raw = call_ollama(active_prompt, model, url, timeout, retries,
+                                      image_b64=image_b64, media_type=media_type)
                 captions = parse_captions(raw)
 
                 bad_chars = find_non_ascii_chars(captions) if captions else []
@@ -984,6 +1110,12 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         f"{skipped} resumed, {errors} errors -> {output_path}"
     )
 
+    if with_images:
+        print(
+            f"Images: {images_used} scene(s) supplemented with a rendered crop, "
+            f"{images_missing} had no usable image (sent text-only)."
+        )
+
     print(f"\nReprompts: {total_reprompts} total across {len(reprompted_scenes)} scene(s).")
     if all_bad_chars:
         char_list = ", ".join(
@@ -1001,12 +1133,13 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
     if prompt_log_file:
         if last_ascii_grid is not None:
             log_text = build_prompt_log_text(
-                num_captions, dict_string, last_metadata, grid_label, last_ascii_grid
+                num_captions, dict_string, last_metadata, grid_label, last_ascii_grid,
+                image_clause=image_clause,
             )
         else:
             log_text = build_prompt_log_text(
                 num_captions, dict_string, "No metadata available.", grid_label,
-                "(no scenes were sent to the LLM this run)",
+                "(no scenes were sent to the LLM this run)", image_clause=image_clause,
             )
         os.makedirs(os.path.dirname(os.path.abspath(prompt_log_file)) or ".", exist_ok=True)
         with open(prompt_log_file, "w", encoding="utf-8") as f:
@@ -1151,6 +1284,26 @@ def main():
         action="store_true",
         help="Disable writing the prompt log file; print the final prompt to the console instead.",
     )
+    parser.add_argument(
+        "--with-images",
+        action="store_true",
+        help=(
+            "Also send each level's rendered PNG crop to the model to supplement the "
+            "ASCII/token grid. The crops are the ones produced by "
+            "build_dataset_with_ascii.py --with_images (one per sample, referenced by the "
+            "dataset's 'image' field). REQUIRES a vision-capable model and a backend that "
+            "accepts images (claude, openai, gemini, or an Ollama vision model such as "
+            "llama3.2-vision / llava / qwen2.5vl)."
+        ),
+    )
+    parser.add_argument(
+        "--allow-nonvision-model",
+        action="store_true",
+        help=(
+            "Skip the safety check that --with-images is paired with a vision-capable "
+            "model. Use only if you know the chosen model accepts images."
+        ),
+    )
     args = parser.parse_args()
 
     for path, label in [(args.dataset, "dataset"), (args.tileset, "tileset")]:
@@ -1184,6 +1337,21 @@ def main():
     }
     model = args.model or default_models[args.backend]
 
+    # Sending images to a text-only model silently wastes the crop (and on the
+    # local Ollama backend, the image is simply ignored). Guard against it.
+    if args.with_images and not model_supports_vision(model) and not args.allow_nonvision_model:
+        print(
+            f"Error: --with-images needs a vision-capable model, but '{model}' does not "
+            f"look like one.\n"
+            f"  Use a multimodal model, for example:\n"
+            f"    --backend claude  --model claude-sonnet-4-6\n"
+            f"    --backend openai  --model gpt-4o\n"
+            f"    --backend gemini  --model gemini-2.5-flash\n"
+            f"    --backend ollama  --model llama3.2-vision   (or llava / qwen2.5vl)\n"
+            f"  Or pass --allow-nonvision-model to override this check."
+        )
+        sys.exit(1)
+
     generate_captions(
         args.dataset,
         args.tileset,
@@ -1201,6 +1369,7 @@ def main():
         max_reprompts=args.max_reprompts,
         num_captions=args.num_captions,
         prompt_log_file=None if args.no_prompt_log else args.prompt_log,
+        with_images=args.with_images,
     )
 
 
