@@ -67,6 +67,10 @@ def analyze_floor(scene, id_to_char, tile_descriptors, describe_absence):
                     in_gap = True
             else:
                 in_gap = False
+        # No real passable/enemy gaps found -> the non-solid tiles are something else,
+        # so treat the row as a full floor rather than emitting "floor with no gaps".
+        if gaps == 0:
+            return "full floor"
         return f"floor with {describe_quantity(gaps) if coarse_counts else gaps} gap" + ("s" if pluralize and gaps != 1 else "")
     else:
         # Count contiguous groups of solid tiles
@@ -139,13 +143,14 @@ def analyze_ceiling(scene, id_to_char, tile_descriptors, describe_absence, ceili
                     in_gap = True
             else:
                 in_gap = False
-        result = f" ceiling with {describe_quantity(gaps) if coarse_counts else gaps} gap" + ("s" if pluralize and gaps != 1 else "") + "."
+        # If no contiguous gaps of passable/moving tiles were found, the non-solid
+        # tiles are something else (e.g. enemies tagged "enemy"). Treat the row as a
+        # full ceiling rather than emitting the malformed "ceiling with no gaps." phrase,
+        # which isn't a valid caption (it would crash bigger_ceiling's ordered lookup).
+        if gaps == 0:
+            return " full ceiling."
 
-        # Adding the "moving" check should make this code unnecessary
-        #if result == ' ceiling with no gaps.':
-        #    print("This should not happen: ceiling with no gaps")
-        #    print("ceiling_row:", scene[ceiling_row])
-        #    result = " full ceiling."
+        result = f" ceiling with {describe_quantity(gaps) if coarse_counts else gaps} gap" + ("s" if pluralize and gaps != 1 else "") + "."
 
         return result
     elif describe_absence:

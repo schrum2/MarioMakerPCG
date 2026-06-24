@@ -574,7 +574,16 @@ def assign_caption(scene, id_to_char, char_to_id, tile_descriptors, describe_loc
         if ceiling_higher == None:
             return False
         ceiling_order = ["full ceiling.", "ceiling with one gap.", "ceiling with two gaps.", "ceiling with a few gaps.", "ceiling with several gaps.", "ceiling with many gaps.", "no ceiling.", ""]
-        return ceiling_order.index(ceiling_higher.strip()) <= ceiling_order.index(ceiling_regular.strip())
+        # Defensive lookup: any phrase not in the ordered list is treated as the
+        # "least ceiling" (end of the order) instead of raising ValueError. This
+        # guarantees an unexpected caption phrase can never crash a training run's
+        # eval, no matter which code path produced it.
+        def rank(phrase):
+            try:
+                return ceiling_order.index(phrase.strip())
+            except ValueError:
+                return len(ceiling_order)
+        return rank(ceiling_higher) <= rank(ceiling_regular)
 
     # Analyze ceiling
     for c in range(CEILING, 0, -1):
