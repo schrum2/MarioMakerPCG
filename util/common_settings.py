@@ -29,3 +29,25 @@ MM2_GAMESTYLE = 'SMW'
 # each (often transparent) sprite so the tile grid reads correctly.
 MM2_SKY_COLOR = (0x5C, 0x94, 0xFC)
 
+# Old Mario
+#MARIO_TILESET = 'datasets/smb.json'
+
+# Not used
+
+LR_HEIGHT = 32
+LR_WIDTH = 32
+
+LR_TILE_PIXEL_DIM = 8
+LR_TILE_COUNT = 8
+
+LR_TILESET = 'datasets/Loderunner.json'
+
+MEGAMAN_HEIGHT = 14
+MEGAMAN_WIDTH = 16
+
+MM_TILE_PIXEL_DIM = 16
+MM_SIMPLE_TILE_COUNT = 13
+MM_FULL_TILE_COUNT = 41
+
+MM_FULL_TILESET = 'datasets/MM.json'
+MM_SIMPLE_TILESET = 'datasets/MM_Simple_Tileset.json'
