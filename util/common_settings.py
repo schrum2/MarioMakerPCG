@@ -12,8 +12,12 @@ MARIO_TILE_COUNT = 17
 
 MARIO_TILESET = 'extended_tiles.json'
 
-MM_EXTENDED_TILE_COUNT = 17
-MM_EXTENDED_TILESET = 'extended_tiles.json'
+# MM data is encoded with the full canonical MM2 tileset (mm2_tileset_we.json),
+# which defines 68 tile types (ids 0-67). These must match the data's tile range,
+# otherwise F.one_hot(scene, num_classes=MM_EXTENDED_TILE_COUNT) raises
+# "Class values must be smaller than num_classes" on tile ids >= the count.
+MM_EXTENDED_TILE_COUNT = 68
+MM_EXTENDED_TILESET = 'mm2_tileset_we.json'
 
 # Mario Maker 2 (the canonical training tileset; see memory/canonical-mm-tileset).
 # Tiles are rendered from img/spritesheet.png using the per-object {x,y,w,h}
