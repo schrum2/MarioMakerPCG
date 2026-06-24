@@ -401,8 +401,6 @@ def main():
     image_out_dir = None
     images_saved = 0
     images_missing = 0
-    # Crop paths in the dataset are stored relative to the output JSON's folder.
-    output_dir_parent = Path(args.output).resolve().parent
     if args.with_images:
         Image = _load_pil()
         locator = ImageLocator(
@@ -496,9 +494,19 @@ def main():
                     if args.with_images:
                         if level_img is not None and x is not None:
                             crop = crop_image_window(Image, level_img, x, ppt)
-                            crop_path = image_out_dir / f"{_safe_filename(sample_name)}.png"
+                            # Always prefix the crop filename with the level
+                            # (source file) name so images are identifiable and
+                            # never collide across levels. For multi-file input
+                            # sample_name already carries the stem ("stem/...").
+                            if sample_name.startswith(f"{file_stem}_") or sample_name.startswith(f"{file_stem}/"):
+                                img_stem = sample_name
+                            else:
+                                img_stem = f"{file_stem}_{sample_name}"
+                            crop_path = image_out_dir / f"{_safe_filename(img_stem)}.png"
                             crop.save(crop_path)
-                            entry["image"] = os.path.relpath(crop_path, output_dir_parent)
+                            # Store the exact (absolute) path to the crop so the
+                            # dataset can be opened from any working directory.
+                            entry["image"] = str(crop_path.resolve())
                             images_saved += 1
                         else:
                             entry["image"] = None

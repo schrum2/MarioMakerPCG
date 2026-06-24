@@ -109,8 +109,105 @@ class TileViewer(tk.Tk):
 
     def toggle_view_mode(self):
         """Toggle between numeric/character grid and image view modes."""
+        self.show_real = False  # leaving real-image mode
+        self.show_real_var.set(False)
         self.show_images = not getattr(self, 'show_images', False)
         self.redraw()
+
+    def _resolve_image_path(self, image_path):
+        """Resolve the (usually relative) 'image' path from a sample to an
+        existing file on disk, or return None if it can't be found.
+
+        The path stored in the JSON (e.g. "ds_images\\source_0_0.png") is
+        normally relative to the dataset file's directory, but we also try the
+        path as-is and relative to the current working directory.
+        """
+        if not image_path:
+            return None
+        # Normalize separators so Windows-style backslashes work everywhere.
+        image_path = os.path.normpath(image_path)
+        candidates = []
+        if os.path.isabs(image_path):
+            candidates.append(image_path)
+        else:
+            dataset_path = getattr(self, 'dataset_path', None)
+            if dataset_path:
+                candidates.append(os.path.join(os.path.dirname(os.path.abspath(dataset_path)), image_path))
+            candidates.append(os.path.abspath(image_path))
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                return candidate
+        return None
+
+    def show_real_image(self):
+        """Toggle showing the real source image on the main canvas, in place of
+        the ASCII grid. When checked, the image is looked up via the 'image'
+        path stored in the dataset (a popup is shown ONLY when it can't be
+        loaded). When unchecked, restore whatever view was active before.
+        """
+        if self.show_real_var.get():
+            if not self.dataset:
+                self.show_real_var.set(False)
+                return
+            # Remember the view we're leaving so we can return to it.
+            self._prev_show_images = getattr(self, 'show_images', False)
+            self.show_real = True
+            self.show_images = False
+        else:
+            # Restore the view that was active before showing the real image.
+            self._exit_real_image_mode()
+        self.redraw()
+
+    def _exit_real_image_mode(self):
+        """Leave real-image mode and restore whatever view (grid or generated
+        image) was active before it was turned on, keeping the checkbox in sync."""
+        self.show_real = False
+        self.show_real_var.set(False)
+        self.show_images = getattr(self, '_prev_show_images', False)
+
+    def _render_real_image(self):
+        """Draw the current sample's real source image onto the main canvas, in
+        place of the ASCII grid. Returns True on success. On failure, shows an
+        error popup, leaves real-image mode, and returns False so the caller can
+        fall back to the normal grid/image rendering."""
+        sample = self.dataset[self.current_sample_idx]
+        image_path = sample.get('image') if isinstance(sample, dict) else None
+        resolved = self._resolve_image_path(image_path)
+
+        if resolved is None:
+            self._exit_real_image_mode()
+            messagebox.showerror(
+                "Image not available",
+                "Could not find the real image for this sample.\n\n"
+                f"Path: {image_path}"
+            )
+            return False
+
+        try:
+            image = Image.open(resolved)
+        except Exception as e:
+            self._exit_real_image_mode()
+            messagebox.showerror(
+                "Image not available",
+                f"Failed to open the real image:\n{resolved}\n\n{e}"
+            )
+            return False
+
+        self.current_pil_image = image  # Store for "Save Image As".
+        canvas_width = int(self.canvas['width'])
+        canvas_height = int(self.canvas['height'])
+        img_width, img_height = image.size
+        scale = min(canvas_width / img_width, canvas_height / img_height, 1.0)
+        display_image = image
+        if scale < 1.0:
+            new_size = (int(img_width * scale), int(img_height * scale))
+            display_image = image.resize(new_size, Image.Resampling.NEAREST)
+        photo_image = PIL.ImageTk.PhotoImage(display_image)
+        self.canvas.create_image(
+            canvas_width // 2, canvas_height // 2, image=photo_image, anchor="center"
+        )
+        self.photo_image = photo_image  # Keep a reference to avoid GC.
+        return True
 
     def create_widgets(self):
         frame = tk.Frame(self)
@@ -136,6 +233,15 @@ class TileViewer(tk.Tk):
 
         toggle_view_button = tk.Button(checkbox_frame, text="Toggle View Mode", command=self.toggle_view_mode)
         toggle_view_button.pack(side=tk.LEFT, padx=5)
+
+        self.show_real_var = tk.BooleanVar(value=False)
+        show_real_image_button = tk.Checkbutton(
+            checkbox_frame,
+            text="Show Real Image",
+            variable=self.show_real_var,
+            command=self.show_real_image
+        )
+        show_real_image_button.pack(side=tk.LEFT, padx=5)
 
         self.canvas = tk.Canvas(self, bg="white", width=self.window_size, height=self.window_size - 100)
         self.canvas.pack(pady=1)
@@ -514,7 +620,10 @@ class TileViewer(tk.Tk):
 
         
 
-        if getattr(self, 'show_images', False):
+        if getattr(self, 'show_real', False) and self._render_real_image():
+            # Real source image drawn onto the canvas; nothing else to draw.
+            pass
+        elif getattr(self, 'show_images', False):
             # Display as image using visualize_samples
             from level_dataset import visualize_samples
             import PIL.ImageTk
