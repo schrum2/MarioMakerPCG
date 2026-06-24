@@ -49,6 +49,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 REM -- Pipeline ---------------------------------------------------------------
+python analyze_level_dimensions.py --input "%INPUT%" --output datasets\%GAME%_LevelSizeDistribution-%TYPE%.png --csv datasets\%GAME%_LevelSizeDistribution-%TYPE%.csv --title "%GAME% complete level size distribution (%TYPE%)"
 python build_dataset_with_ascii.py --input_file %INPUT% --output %RAW_OUTPUT% --tileset %TILESET% --sliding_window --stride 20
 python MarioMaker_llm_captions.py --dataset %RAW_OUTPUT% --tileset %TILESET% --output %CAPTIONED_OUTPUT% --model %MODEL% --grid-format tokens --tileset-we mm2_tileset_we.json --ascii-output-dir "%LLM_ASCII_DIR%" --num-captions 1 --prompt-log MM2_Prompt.txt
 python split_mario_maker_data.py --json %CAPTIONED_OUTPUT% --seed %SEED%
