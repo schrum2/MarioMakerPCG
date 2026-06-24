@@ -42,8 +42,10 @@ class BucketBatchSampler:
         for indices in buckets.values():
             for i in range(0, len(indices), batch_size):
                 batch = indices[i:i + batch_size]
-                # Skip incomplete batches at the tail of each bucket when drop_last is set
-                if drop_last and len(batch) < batch_size:
+                # Keep a final smaller batch when the bucket is smaller than the requested batch size.
+                # This avoids producing an empty dataloader for small datasets while still dropping
+                # tail remainders for larger buckets.
+                if drop_last and len(batch) < batch_size and len(indices) > batch_size:
                     continue
                 self.batches.append(batch)
 
