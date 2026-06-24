@@ -33,6 +33,8 @@ imageio
 matplotlib
 scipy
 pycryptodome
+torch
+transformers
 
 # Testing
 pytest
