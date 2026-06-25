@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 import json
+import threading
 from collections import Counter
 
 import numpy as np
@@ -10,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from safetensors.torch import save_file
 from torch.utils.data import DataLoader, TensorDataset
+from util.plotter import Plotter
 
 # Ensure repo root on path
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -103,6 +105,16 @@ def main():
     model = SkipGramModel(vocab_size=vocab_size, embedding_dim=args.embedding_dim).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
+    log_file = os.path.join(args.output_dir, 'training_log.jsonl')
+    with open(log_file, 'w') as f:
+        pass
+
+    plotter = Plotter(log_file=log_file, update_interval=5.0, left_key='loss', left_label='Loss', output_png='training_progress.png')
+    plot_thread = threading.Thread(target=plotter.start_plotting)
+    plot_thread.daemon = True
+    plotter.running = True
+    plot_thread.start()
+
     for epoch in range(args.epochs):
         total_loss = 0.0
         for centers_batch, contexts_batch in loader:
@@ -117,11 +129,13 @@ def main():
             loss = model(centers_batch, contexts_batch, neg_t)
             loss.backward()
             opt.step()
-            total_loss += float(loss.item()) * B
+            total_loss += loss.item()
 
-        avg_loss = total_loss / len(centers_arr)
-        print(f"Epoch {epoch+1}/{args.epochs} avg_loss={avg_loss:.6f}")
-        # save checkpoint
+        print(f"Epoch {epoch+1}: Loss = {total_loss:.4f}")
+        with open(log_file, 'a') as f:
+            log_data = {'epoch': epoch + 1, 'loss': total_loss}
+            f.write(json.dumps(log_data) + '\n')
+        plotter.update_plot()
         torch.save(model.state_dict(), os.path.join(args.output_dir, f'model_epoch{epoch+1}.pt'))
 
     # Save final embeddings
@@ -137,6 +151,9 @@ def main():
             'embedding_dim': int(args.embedding_dim),
             'negative_samples': int(args.negative_samples)
         }, f, indent=2)
+
+    plotter.stop_plotting()
+    plot_thread.join(timeout=1)
 
     print('Training complete. Embeddings saved to', args.output_dir)
 
