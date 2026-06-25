@@ -32,14 +32,15 @@ class SkipGramModel(nn.Module):
         center_vec = self.in_embed(center_ids)  # (B, D)
         context_vec = self.out_embed(context_ids)  # (B, D)
         pos_scores = (center_vec * context_vec).sum(dim=1)
-        pos_loss = F.binary_cross_entropy_with_logits(pos_scores, torch.ones_like(pos_scores))
+        pos_loss = F.binary_cross_entropy_with_logits(pos_scores, torch.ones_like(pos_scores), reduction='none')
 
         neg_vec = self.out_embed(negative_ids)  # (B, neg, D)
         neg_scores = (center_vec.unsqueeze(1) * neg_vec).sum(dim=2)  # (B, neg)
-        neg_loss = F.binary_cross_entropy_with_logits(neg_scores, torch.zeros_like(neg_scores))
-        neg_loss = neg_loss.mean(dim=1)
+        neg_bce = F.binary_cross_entropy_with_logits(neg_scores, torch.zeros_like(neg_scores), reduction='none')  # (B, neg)
+        neg_loss = neg_bce.mean(dim=1)  # mean over negative samples per example
 
-        return (pos_loss + neg_loss).mean()
+        per_example = pos_loss + neg_loss
+        return per_example.mean()
 
 
 def build_pairs(dataset):
