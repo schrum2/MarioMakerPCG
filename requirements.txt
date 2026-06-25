@@ -1,44 +1,28 @@
-bashlex==0.18
-beautifulsoup4==4.12.3
-certifi==2024.8.30
-cffi==1.17.1
-chardet==5.2.0
-click==8.1.7
-cryptography==43.0.3
-idna==3.10
-ipaddress==1.0.23
-keyring==25.4.1
-keyrings.alt==5.0.2
-lxml==5.3.0
-pycparser==2.22
-pyOpenSSL==24.2.1
+# PyTorch CUDA 12.6 build comes from the pytorch index; everything else from PyPI.
+--index-url https://download.pytorch.org/whl/cu126
+torch==2.6.0
+
+--extra-index-url https://pypi.org/simple
+
+# Numerics
+numpy==1.26.4
+
+# Diffusion / transformer stack
+diffusers==0.32.2
+transformers==4.48.3
+accelerate==1.3.0
+safetensors==0.5.2
+datasets==3.2.0
+huggingface_hub==0.28.1
+mario-gpt==0.1.3
+
+# MM2 level extraction / parsing
 pycryptodome==3.21.0
-pyxdg==0.28
-requests==2.32.3
-SecretStorage==3.3.3
-six==1.16.0
-soupsieve==2.6
-urllib3==2.2.3
-orjson==3.10.9
-fastapi==0.115.2
-uvicorn==0.32.0
 kaitaistruct==0.10
+
+# Plotting, images, progress, model graphs
+matplotlib==3.10.0
 Pillow==11.0.0
-psutil==6.1.0
-matplotlib==3.9.2
-datasets
-numpy
-hilbertcurve>=2
-imageio
-matplotlib
-scipy
-pycryptodome
-torch
-transformers
-
-# Testing
-pytest
-types-setuptools
-
-# Documentation.
-sphinx
+tqdm
+torchview==0.2.6
+graphviz
