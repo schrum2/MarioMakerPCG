@@ -748,20 +748,28 @@ def call_gemini(prompt, model, api_key, max_tokens, timeout, retries,
 
 
 def call_ollama(prompt, model, url, timeout, retries, max_tokens=900,
-                image_b64=None, media_type=None):
+                num_ctx=8192, temperature=0.4, image_b64=None, media_type=None):
     body = {
         "model": model,
         "prompt": prompt,
         "stream": False,
+        # Thinking models (e.g. the gemma the reference captions with) otherwise
+        # spend the whole generation budget on a reasoning trace and return an
+        # empty "response" -- or, with num_predict set, never reach a final answer
+        # at all. Disabling thinking sends every token to the caption itself, which
+        # is exactly what the working MarioDiffusion code does (ollama.chat
+        # think=False). Non-thinking models accept and ignore this.
+        "think": False,
         "options": {
             # A small touch of temperature avoids the degenerate empty-output
-            # collapse gemma-family models fall into under fully greedy decoding;
-            # num_ctx is sized for the long token-format prompt (dictionary +
-            # metadata + space-separated T## grid) so generation isn't starved of
-            # context room. num_predict caps the output the same way --max-tokens
-            # does for the API backends.
-            "temperature": 0.4,
-            "num_ctx": 32768,
+            # collapse gemma-family models fall into under fully greedy decoding.
+            # num_ctx must hold the whole prompt (dictionary + metadata +
+            # space-separated T## grid) AND leave room to generate, but setting it
+            # too high blows the KV cache past VRAM on a 12B+ model and Ollama then
+            # returns an empty response -- so it is tunable via --num-ctx.
+            # num_predict caps output the way --max-tokens does for the API backends.
+            "temperature": temperature,
+            "num_ctx": num_ctx,
             "num_predict": max_tokens,
         },
     }
@@ -780,7 +788,21 @@ def call_ollama(prompt, model, url, timeout, retries, max_tokens=900,
             )
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
-                return result.get("response", "").strip()
+                text = result.get("response", "").strip()
+                if not text:
+                    # Surface Ollama's own accounting so an empty generation is
+                    # diagnosable rather than silent. prompt_tokens approaching
+                    # num_ctx means the prompt overflowed the window; output_tokens
+                    # of 0 with done_reason 'load' points at a failed model/KV-cache
+                    # load (often num_ctx too large for VRAM), while done_reason
+                    # 'stop' with 0 output is a greedy/template collapse.
+                    print(
+                        f"\n    [ollama empty] done_reason={result.get('done_reason')!r} "
+                        f"prompt_tokens={result.get('prompt_eval_count')} "
+                        f"output_tokens={result.get('eval_count')} num_ctx={num_ctx}",
+                        end="", flush=True,
+                    )
+                return text
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             if attempt < retries - 1:
                 wait = min(2 ** attempt * 5, 60)
@@ -1012,7 +1034,8 @@ def _validate_tileset_match(dataset, id_to_char, tileset_path):
 def generate_captions(dataset_path, tileset_path, output_path, model, url, timeout, retries,
                        grid_format="ascii", tileset_we_path=None, ascii_output_dir=None,
                        backend="ollama", api_key=None, max_tokens=900, max_reprompts=3,
-                       num_captions=5, prompt_log_file="MM2_Prompt.txt", with_images=False):
+                       num_captions=5, prompt_log_file="MM2_Prompt.txt", with_images=False,
+                       num_ctx=8192, temperature=0.4):
     image_clause = build_image_clause() if with_images else ""
     prompt_template = build_prompt_template(num_captions, image_clause)
 
@@ -1157,7 +1180,8 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                     # ollama, moondream and llava all go through the local Ollama
                     # server; moondream/llava just pin a particular vision model.
                     raw = call_ollama(active_prompt, model, url, timeout, retries,
-                                      max_tokens=max_tokens,
+                                      max_tokens=max_tokens, num_ctx=num_ctx,
+                                      temperature=temperature,
                                       image_b64=image_b64, media_type=media_type)
                 captions = parse_captions(raw)
                 last_raw = raw
@@ -1350,6 +1374,25 @@ def main():
         help="Ollama API endpoint. Default: http://localhost:11434/api/generate",
     )
     parser.add_argument(
+        "--num-ctx",
+        type=int,
+        default=8192,
+        help=(
+            "Ollama context window (tokens). Must hold the whole prompt plus room "
+            "to generate, but too large blows the KV cache past VRAM on big models "
+            "and Ollama then returns empty responses. Default: 8192"
+        ),
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.4,
+        help=(
+            "Ollama sampling temperature. A small non-zero value avoids the empty "
+            "output gemma-family models fall into under greedy (0) decoding. Default: 0.4"
+        ),
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=500,
@@ -1502,6 +1545,8 @@ def main():
         num_captions=args.num_captions,
         prompt_log_file=None if args.no_prompt_log else args.prompt_log,
         with_images=args.with_images,
+        num_ctx=args.num_ctx,
+        temperature=args.temperature,
     )
 
 
