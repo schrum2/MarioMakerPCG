@@ -42,6 +42,22 @@ def main():
     parser.add_argument('--focal_gamma', type=float, default=0.0, help='Focal loss gamma. 0 = disabled')
     parser.add_argument('--label_smoothing', type=float, default=0.0, help='Label smoothing (not used for BCE negative sampling, kept for future)')
     parser.add_argument('--save_every', type=int, default=20, help='Save checkpoint every N epochs. 0 disables periodic checkpointing.')
+    parser.add_argument('--lr_patience', type=int, default=3,
+                        help='Reduce learning rate when training loss has not improved for this many epochs. 0 disables LR scheduling.')
+    parser.add_argument('--lr_factor', type=float, default=0.5,
+                        help='Factor to reduce the learning rate by when plateauing.')
+    parser.add_argument('--min_lr', type=float, default=1e-5,
+                        help='Minimum learning rate for ReduceLROnPlateau.')
+    parser.add_argument('--early_stop_patience', type=int, default=10,
+                        help='Stop training after this many epochs with no improvement. 0 disables early stopping.')
+    parser.add_argument('--early_stop_delta', type=float, default=1e-4,
+                        help='Minimum loss improvement to reset early stopping counter.')
+    parser.add_argument('--min_epochs', type=int, default=20,
+                        help='Minimum number of epochs to run before early stopping can trigger.')
+    parser.add_argument('--clip_grad_norm', type=float, default=1.0,
+                        help='Clip gradient norm to this value. 0 disables clipping.')
+    parser.add_argument('--normalize_embeddings', action='store_true',
+                        help='Normalize final saved embeddings to unit norm.')
 
     args = parser.parse_args()
 
@@ -81,6 +97,18 @@ def main():
     # Model, optimizer
     model = Block2Vec(vocab_size=vocab_size, embedding_dim=args.embedding_dim, negative_samples=args.negative_samples)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = None
+    if args.lr_patience > 0:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=args.lr_factor,
+            patience=args.lr_patience,
+            min_lr=args.min_lr,
+            verbose=True,
+        )
+    best_loss = float('inf')
+    epochs_since_improvement = 0
 
     # Initialize Plotter
     log_file = os.path.join(args.output_dir, 'training_log.jsonl')
@@ -121,6 +149,8 @@ def main():
             per_example_loss = model(center, context, sample_weights=sample_weights, focal_gamma=args.focal_gamma, return_per_example=True)
             loss = per_example_loss.mean()
             loss.backward()
+            if args.clip_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad_norm)
             optimizer.step()
             total_loss += loss.item()
 
@@ -130,11 +160,12 @@ def main():
                 per_class_loss_sum[c] += per_example_loss[i].item()
                 per_class_count[c] += 1
 
-        print(f"Epoch {epoch+1}: Loss = {total_loss:.4f}")
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch {epoch+1}: Loss = {total_loss:.4f} lr={current_lr:.6g}")
 
         # Log the loss to the log file
         with open(log_file, 'a') as f:
-            log_data = {'epoch': epoch + 1, 'loss': total_loss}
+            log_data = {'epoch': epoch + 1, 'loss': total_loss, 'lr': current_lr}
             # Add per-class average losses for classes seen this epoch
             per_class_avg = {str(i): per_class_loss_sum[i] / per_class_count[i] if per_class_count[i] > 0 else None for i in range(vocab_size)}
             log_data['per_class_avg_loss'] = per_class_avg
@@ -143,13 +174,31 @@ def main():
         # Update the plot
         plotter.update_plot()
 
+        if scheduler is not None:
+            scheduler.step(total_loss)
+
+        if total_loss + args.early_stop_delta < best_loss:
+            best_loss = total_loss
+            epochs_since_improvement = 0
+        else:
+            epochs_since_improvement += 1
+
         if args.save_every > 0 and (epoch + 1) % args.save_every == 0 and epoch + 1 < args.epochs:
             save_checkpoint(model, args.output_dir, epoch + 1)
+
+        if args.early_stop_patience > 0 and epoch + 1 >= args.min_epochs and epochs_since_improvement >= args.early_stop_patience:
+            print(f"Early stopping after epoch {epoch+1}: no improvement in {epochs_since_improvement} epochs.")
+            break
 
     print("Done: show nearest neighbors of each tile")
     for tile_id in range(vocab_size):
         print(f"Top neighbors of tile {tile_id}")
         print_nearest_neighbors(model, tile_id, k=5)
+
+    if args.normalize_embeddings:
+        with torch.no_grad():
+            model.in_embed.weight.data = F.normalize(model.in_embed.weight.data, dim=1)
+            model.out_embed.weight.data = F.normalize(model.out_embed.weight.data, dim=1)
 
     # ====== Save Embeddings ======
     model.save_pretrained(args.output_dir)
