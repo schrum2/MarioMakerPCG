@@ -38,6 +38,9 @@ def main():
     parser.add_argument('--lr', type=float, default=LR, help='Learning rate')
     parser.add_argument('--negative_samples', type=int, default=NEGATIVE_SAMPLES, help='Number of negative context tiles per positive pair')
     parser.add_argument('--vocab_size', type=int, default=None, help='Number of tile types. Defaults to the largest tile id in the data + 1. Set this to the tileset size so every tile id gets an embedding row.')
+    parser.add_argument('--use_class_weights', action='store_true', help='Use inverse-frequency class weights to upweight rare center tiles')
+    parser.add_argument('--focal_gamma', type=float, default=0.0, help='Focal loss gamma. 0 = disabled')
+    parser.add_argument('--label_smoothing', type=float, default=0.0, help='Label smoothing (not used for BCE negative sampling, kept for future)')
 
     args = parser.parse_args()
 
@@ -90,19 +93,46 @@ def main():
 
     for epoch in range(args.epochs):
         total_loss = 0
+        # Per-class accumulators for diagnostics
+        per_class_loss_sum = [0.0] * vocab_size
+        per_class_count = [0] * vocab_size
         for center, context in dataloader:
-            optimizer.zero_grad() # Claude said to move this before the loss calculation
-            loss = model(center, context)
-            #optimizer.zero_grad()
+            optimizer.zero_grad()
+
+            # If class weights requested, build a per-example weight vector matching expanded centers
+            if args.use_class_weights:
+                # dataset.center_counts exists and contains counts for centers
+                freqs = [dataset.center_counts.get(i, 0) for i in range(vocab_size)]
+                freqs = [f if f > 0 else 1 for f in freqs]
+                inv_weights = [1.0 / (f ** 0.5) for f in freqs]
+                weight_tensor = torch.tensor(inv_weights, dtype=torch.float)
+                batch_size, context_len = context.shape
+                center_expanded = center.unsqueeze(1).expand(-1, context_len).reshape(-1)
+                sample_weights = weight_tensor[center_expanded]
+            else:
+                sample_weights = None
+
+            # Use the model's new API to return per-example loss so we can aggregate per-class diagnostics
+            per_example_loss = model(center, context, sample_weights=sample_weights, focal_gamma=args.focal_gamma, return_per_example=True)
+            loss = per_example_loss.mean()
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
+
+            # Accumulate per-class stats
+            batch_centers = center.unsqueeze(1).expand(-1, context.shape[1]).reshape(-1)
+            for i, c in enumerate(batch_centers.tolist()):
+                per_class_loss_sum[c] += per_example_loss[i].item()
+                per_class_count[c] += 1
 
         print(f"Epoch {epoch+1}: Loss = {total_loss:.4f}")
 
         # Log the loss to the log file
         with open(log_file, 'a') as f:
             log_data = {'epoch': epoch + 1, 'loss': total_loss}
+            # Add per-class average losses for classes seen this epoch
+            per_class_avg = {str(i): per_class_loss_sum[i] / per_class_count[i] if per_class_count[i] > 0 else None for i in range(vocab_size)}
+            log_data['per_class_avg_loss'] = per_class_avg
             f.write(json.dumps(log_data) + '\n')
 
         # Update the plot
