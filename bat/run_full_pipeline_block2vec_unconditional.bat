@@ -10,7 +10,7 @@ REM [model]        Ollama model for captioning, defaults to "qwen2.5:14b"
 REM [type]         defaults to "regular"
 REM [game]         defaults to "MM"
 REM [seed]         defaults to 0
-REM [embedding_dim] block embedding size, defaults to 32 (MM has ~69 tile types)
+REM [embedding_dim] block embedding size, defaults to 16
 cd ..
 
 set INPUT=%~1
@@ -28,7 +28,7 @@ if "%MODEL%"=="" set MODEL=qwen2.5:14b
 if "%TYPE%"=="" set TYPE=regular
 if "%GAME%"=="" set GAME=MM
 if "%SEED%"=="" set SEED=0
-if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=32
+if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=16
 
 set TILESET=mm2_tileset_we.json
 set NUM_TILES=69

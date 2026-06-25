@@ -2,21 +2,24 @@
 NUM_INFERENCE_STEPS = 30
 GUIDANCE_SCALE = 7.5
 
-# CHANGED FROM MM2 TO TRY TO GET THIS TO WORK!!!!! RESET!!!
-
+# Mario Maker uses the canonical MM2 tileset (mm2_tileset_we.json). The MM data is
+# encoded as sorted(tileset['tiles']) + the appended '_' padding tile, giving 69
+# tile ids (0-68): 68 real tiles plus '_'. The trained block2vec embeddings and the
+# scene data both use this 69-id range (verified: datasets/MM_LevelsAndCaptions use
+# ids 0-68; block_embeddings.pt is 69 rows), so the tile count must be 69. Using a
+# smaller tileset (e.g. the 17-tile extended_tiles.json) makes the model emit tile
+# ids outside the tileset and assign_caption raises KeyError: <id> on lookup.
 MARIO_HEIGHT = 20
 MARIO_WIDTH = 20
 
 MARIO_TILE_PIXEL_DIM = 16
-MARIO_TILE_COUNT = 17
+MARIO_TILE_COUNT = 69
 
-MARIO_TILESET = 'extended_tiles.json'
+MARIO_TILESET = 'mm2_tileset_we.json'
 
-# MM data is encoded with the full canonical MM2 tileset (mm2_tileset_we.json),
-# which defines 68 tile types (ids 0-67). These must match the data's tile range,
-# otherwise F.one_hot(scene, num_classes=MM_EXTENDED_TILE_COUNT) raises
-# "Class values must be smaller than num_classes" on tile ids >= the count.
-MM_EXTENDED_TILE_COUNT = 68
+# Kept as aliases of the canonical MM2 tileset/count above so older "MM_EXTENDED"
+# callers stay in sync.
+MM_EXTENDED_TILE_COUNT = 69
 MM_EXTENDED_TILESET = 'mm2_tileset_we.json'
 
 # Mario Maker 2 (the canonical training tileset; see memory/canonical-mm-tileset).
