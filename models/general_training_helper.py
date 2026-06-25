@@ -32,34 +32,24 @@ class BucketBatchSampler:
     """
     def __init__(self, dataset, batch_size, drop_last=True, shuffle=True):
         self.shuffle = shuffle
-        # Group dataset indices by (height, width). A batch is collated with
-        # torch.stack, which needs identical shapes, so every sample in a batch
-        # must share BOTH dimensions. Keying on width alone is fine while every
-        # scene is the same height, but once different size buckets are padded to
-        # different heights (see bucket_levels_by_size.py) two buckets that happen
-        # to share a width would land in one batch and crash the collate. For a
-        # single-height dataset this is identical to the old width-only grouping.
+        # Group dataset indices by scene size (height, width), so mixed-height buckets stack too
         buckets = defaultdict(list)
         for idx in range(len(dataset)):
-            scene = dataset[idx][0]  # scene tensor is (C, H, W)
-            buckets[(scene.shape[1], scene.shape[2])].append(idx)
+            _, h, w = dataset[idx][0].shape  # scene tensor is (C, H, W)
+            buckets[(h, w)].append(idx)
 
         self.batches = []
         for indices in buckets.values():
             for i in range(0, len(indices), batch_size):
                 batch = indices[i:i + batch_size]
-                # Keep a final smaller batch when the bucket is smaller than the requested batch size.
-                # This avoids producing an empty dataloader for small datasets while still dropping
-                # tail remainders for larger buckets.
+                # Skip incomplete batches at the tail of each bucket when drop_last is set,
+                # but keep the sole batch of a bucket smaller than batch_size (small datasets)
                 if drop_last and len(batch) < batch_size and len(indices) > batch_size:
                     continue
                 self.batches.append(batch)
 
-        # Unique scene widths present in the dataset; used to generate variably-sized benchmark
-        # samples at epoch checkpoints during training. Kept as plain widths (not (H, W) pairs) so
-        # callers that pass these straight to the pipeline's `width` keep working. dict.fromkeys
-        # drops duplicate widths while preserving first-seen order.
-        self.shapes = list(dict.fromkeys(w for (_h, w) in buckets))
+        # Unique scene widths present in the dataset; used to generate variably-sized benchmark samples at epoch checkpoints during training
+        self.shapes = list(dict.fromkeys(w for _, w in buckets))
 
     def __iter__(self):
         # Re-shuffle every epoch so sample order varies across epochs, matching DataLoader(shuffle=True) behavior.
