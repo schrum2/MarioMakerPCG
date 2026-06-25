@@ -79,6 +79,7 @@ from build_dataset_with_ascii import (  # noqa: E402
 )
 from analyze_level_dimensions import level_content_box  # noqa: E402
 import util.common_settings as common_settings  # noqa: E402
+import combine_data  # noqa: E402  (Fletcher's merge helper, reused for --merged_output)
 
 # Warn about a level when this fraction of its characters aren't in the tileset;
 # the same threshold build_dataset_with_ascii uses to flag a likely wrong tileset.
@@ -240,6 +241,9 @@ def main():
     parser.add_argument("--empty_chars", default=" ",
                         help="Characters treated as sky/air when trimming the content box and when "
                              "padding. Default: a single space (the mm2_tileset_we air tile).")
+    parser.add_argument("--merged_output", default=None,
+                        help="If set, also merge every bucket's levels into this one JSON (via "
+                             "combine_data.py) -- the single mixed-size file the trainer consumes.")
     args = parser.parse_args()
 
     try:
@@ -328,7 +332,13 @@ def main():
         print(f"Unmapped characters: {total_unmapped}/{total_chars} "
               f"({total_unmapped / total_chars:.1%}) across the bucketed levels.")
 
-    if len(written) > 1:
+    if args.merged_output:
+        # Stitch the per-bucket files into the single mixed-size training file with
+        # Fletcher's merge helper, so it matches a hand-run combine_data.py exactly.
+        if not written:
+            sys.exit("ERROR: no levels matched any bucket, so there is nothing to merge.")
+        combine_data.combine_json_files(args.merged_output, written)
+    elif len(written) > 1:
         # The per-bucket files share a scene schema, so combine_data.py merges them
         # straight into the single mixed-size file the trainer consumes.
         merged = os.path.join(args.output_dir, f"{args.prefix}_merged.json")

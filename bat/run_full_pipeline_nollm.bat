@@ -51,6 +51,8 @@ if /I "%GAME%"=="MM" (
 
 set RAW_OUTPUT=datasets\%GAME%_Levels-%TYPE%.json
 set CAPTIONED_OUTPUT=datasets\%GAME%_LevelsAndCaptions-%TYPE%.json
+REM Folder for the per-size bucket JSONs; their merge becomes RAW_OUTPUT below.
+set BUCKET_DIR=datasets\%GAME%_size_buckets-%TYPE%
 
 set MLM_OUTPUT=%GAME%-MLM-%TYPE%%SEED%
 if /I "%TEXT_ENCODER%"=="MLM" (
@@ -69,8 +71,8 @@ python analyze_level_dimensions.py --input "%INPUT%" --output datasets\%GAME%_Le
 if %ERRORLEVEL% neq 0 ( echo ERROR: analyze_level_dimensions.py failed. & exit /b 1 )
 
 echo === Step 1: Preparing dataset with tile-presence captions ===
-python build_dataset_with_ascii.py --input_file %INPUT% --output %RAW_OUTPUT% --tileset %TILESET% --sliding_window --stride 20
-if %ERRORLEVEL% neq 0 ( echo ERROR: build_dataset_with_ascii.py failed. & exit /b 1 )
+python bucket_levels_by_size.py --input "%INPUT%" --output_dir "%BUCKET_DIR%" --tileset %TILESET% --merged_output %RAW_OUTPUT%
+if %ERRORLEVEL% neq 0 ( echo ERROR: bucket_levels_by_size.py failed. & exit /b 1 )
 python MarioMaker_create_ascii_captions.py --dataset %RAW_OUTPUT% --tileset %TILESET% --output %CAPTIONED_OUTPUT%
 if %ERRORLEVEL% neq 0 ( echo ERROR: MarioMaker_create_ascii_captions.py failed. & exit /b 1 )
 python split_mario_maker_data.py --json %CAPTIONED_OUTPUT% --seed %SEED%
@@ -121,5 +123,9 @@ if %ERRORLEVEL% neq 0 (
     echo ERROR: evaluate_tile_distribution.py failed.
     exit /b 1
 )
+
+echo === Recording dataset info ===
+python summarize_dataset.py --input "%INPUT%" --dataset %CAPTIONED_OUTPUT% --caption-model "simple captions" --output datasets\%GAME%_LevelsAndCaptions-%TYPE%-info.txt
+if %ERRORLEVEL% neq 0 ( echo ERROR: summarize_dataset.py failed. & exit /b 1 )
 
 echo === Pipeline complete! Model saved to: %DIFF_OUTPUT% ===
