@@ -237,3 +237,4 @@ gemini-api-key.txt
 *.cpp
 *.hpp
 MM2_Prompt.txt
+*.bcd
