@@ -747,15 +747,22 @@ def call_gemini(prompt, model, api_key, max_tokens, timeout, retries,
                 ) from e
 
 
-def call_ollama(prompt, model, url, timeout, retries, image_b64=None, media_type=None):
+def call_ollama(prompt, model, url, timeout, retries, max_tokens=900,
+                image_b64=None, media_type=None):
     body = {
         "model": model,
         "prompt": prompt,
         "stream": False,
         "options": {
-            "temperature": 0,
-            "seed": 42,
-            "num_ctx": 8192
+            # A small touch of temperature avoids the degenerate empty-output
+            # collapse gemma-family models fall into under fully greedy decoding;
+            # num_ctx is sized for the long token-format prompt (dictionary +
+            # metadata + space-separated T## grid) so generation isn't starved of
+            # context room. num_predict caps the output the same way --max-tokens
+            # does for the API backends.
+            "temperature": 0.4,
+            "num_ctx": 32768,
+            "num_predict": max_tokens,
         },
     }
     if image_b64:
@@ -1150,11 +1157,25 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                     # ollama, moondream and llava all go through the local Ollama
                     # server; moondream/llava just pin a particular vision model.
                     raw = call_ollama(active_prompt, model, url, timeout, retries,
+                                      max_tokens=max_tokens,
                                       image_b64=image_b64, media_type=media_type)
                 captions = parse_captions(raw)
                 last_raw = raw
 
-                bad_chars = find_non_ascii_chars(captions) if captions else []
+                # An empty/unparseable response yields no captions. Reprompt
+                # instead of breaking out and dropping the level -- gemma
+                # occasionally returns "" for a scene that succeeds on a retry.
+                if not captions:
+                    reprompted_scenes[name] = reprompted_scenes.get(name, 0) + 1
+                    total_reprompts += 1
+                    print(
+                        f"\n  [REPROMPT {attempt + 1}/{max_reprompts - 1}] "
+                        f"empty response, retrying...",
+                        end=" ", flush=True,
+                    )
+                    continue
+
+                bad_chars = find_non_ascii_chars(captions)
                 if not bad_chars:
                     break
                 all_bad_chars.update(bad_chars)
