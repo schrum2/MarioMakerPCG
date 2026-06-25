@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from safetensors.torch import save_file
 from torch.utils.data import DataLoader, TensorDataset
 
 # Ensure repo root on path
@@ -126,8 +127,16 @@ def main():
     # Save final embeddings
     emb = model.in_embed.weight.detach().cpu()
     torch.save(emb, os.path.join(args.output_dir, 'embeddings.pt'))
+    save_file(
+        model.state_dict(),
+        os.path.join(args.output_dir, 'model.safetensors')
+    )
     with open(os.path.join(args.output_dir, 'config.json'), 'w') as f:
-        json.dump({'vocab_size': int(vocab_size), 'embedding_dim': int(args.embedding_dim)}, f, indent=2)
+        json.dump({
+            'vocab_size': int(vocab_size),
+            'embedding_dim': int(args.embedding_dim),
+            'negative_samples': int(args.negative_samples)
+        }, f, indent=2)
 
     print('Training complete. Embeddings saved to', args.output_dir)
 
