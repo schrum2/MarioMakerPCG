@@ -1,6 +1,7 @@
 @echo off
 REM Usage: train-mario-maker-block2vec.bat [embedding_dim] [seed]
-REM   [embedding_dim] optional, defaults to 16.
+REM   [embedding_dim] optional, defaults to 32 (Mario Maker has ~69 tile types,
+REM                   so it needs a larger embedding than SMB's default of 16).
 REM   [seed]          optional, defaults to 0.
 REM
 REM Trains an UNCONDITIONAL diffusion model on Mario Maker levels using learned
@@ -9,7 +10,7 @@ REM Run prepare-mario-maker.bat first to build and split the dataset.
 cd ..
 
 set EMBEDDING_DIM=%1
-if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=16
+if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=32
 
 set SEED=%2
 if "%SEED%"=="" set SEED=0

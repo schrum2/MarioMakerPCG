@@ -9,7 +9,7 @@ REM <input>        path to a .txt ASCII level file or folder of .txt files
 REM [type]         defaults to "regular"
 REM [game]         defaults to "MM"
 REM [seed]         defaults to 0
-REM [embedding_dim] block embedding size, defaults to 16
+REM [embedding_dim] block embedding size, defaults to 32 (MM has ~69 tile types)
 cd ..
 
 set INPUT=%~1
@@ -25,7 +25,7 @@ if "%INPUT%"=="" (
 if "%TYPE%"=="" set TYPE=regular
 if "%GAME%"=="" set GAME=MM
 if "%SEED%"=="" set SEED=0
-if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=16
+if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=32
 
 set TILESET=mm2_tileset_we.json
 set NUM_TILES=69
