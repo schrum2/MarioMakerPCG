@@ -56,6 +56,19 @@ def build_pairs(dataset):
     return np.array(centers, dtype=np.int32), np.array(contexts, dtype=np.int32)
 
 
+def save_checkpoint(model, output_dir, epoch, vocab_size, embedding_dim, negative_samples):
+    checkpoint_dir = os.path.join(output_dir, f'checkpoint_epoch{epoch}')
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    save_file(model.state_dict(), os.path.join(checkpoint_dir, 'model.safetensors'))
+    torch.save(model.in_embed.weight.detach().cpu(), os.path.join(checkpoint_dir, 'embeddings.pt'))
+    with open(os.path.join(checkpoint_dir, 'config.json'), 'w') as f:
+        json.dump({
+            'vocab_size': int(vocab_size),
+            'embedding_dim': int(embedding_dim),
+            'negative_samples': int(negative_samples)
+        }, f, indent=2)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--json_file', required=True)
@@ -68,6 +81,8 @@ def main():
     parser.add_argument('--subsampling', action='store_true')
     parser.add_argument('--subsample_threshold', type=float, default=0.001)
     parser.add_argument('--vocab_size', type=int, default=None)
+    parser.add_argument('--save_every', type=int, default=20,
+                        help='Save checkpoint every N epochs. 0 disables periodic checkpointing.')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -136,7 +151,10 @@ def main():
             log_data = {'epoch': epoch + 1, 'loss': total_loss}
             f.write(json.dumps(log_data) + '\n')
         plotter.update_plot()
-        torch.save(model.state_dict(), os.path.join(args.output_dir, f'model_epoch{epoch+1}.pt'))
+
+        if args.save_every > 0 and (epoch + 1) % args.save_every == 0 and epoch + 1 < args.epochs:
+            save_checkpoint(model, args.output_dir, epoch + 1,
+                            vocab_size, args.embedding_dim, args.negative_samples)
 
     # Save final embeddings
     emb = model.in_embed.weight.detach().cpu()
