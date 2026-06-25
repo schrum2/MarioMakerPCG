@@ -239,3 +239,5 @@ gemini-api-key.txt
 MM2_Prompt.txt
 *.bcd
 *.png
+*.txt
+*.zip
