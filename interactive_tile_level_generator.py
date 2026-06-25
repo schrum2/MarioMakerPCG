@@ -1043,8 +1043,8 @@ def parse_args():
     parser.add_argument(
         "--game",
         type=str,
-        default="Mario Maker (MM)",
-        choices=["Mario Maker (MM)"],
+        default="MM",
+        choices=["MM"],
         help="Which game to create a model for (affects sample style and tile count)"
     )
     parser.add_argument("--model_path", type=str, help="Path to the trained diffusion model")
@@ -1054,7 +1054,7 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    if args.game == "Mario Maker (MM)":
+    if args.game == "MM":
         game_selected = "Mario Maker (MM)"
         tileset_path = common_settings.MARIO_TILESET
 
