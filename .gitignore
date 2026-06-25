@@ -241,3 +241,9 @@ MM2_Prompt.txt
 *.png
 *.txt
 *.zip
+*.pt
+*.npz
+*.npy
+*.csv
+*.safetensors
+*.jsonl
