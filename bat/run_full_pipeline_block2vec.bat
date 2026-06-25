@@ -116,7 +116,7 @@ REM ids line up with the diffusion model, then learn an embedding per tile.
 REM --vocab_size pins the table to the full tileset so every id has a row.
 python create_tile_level_json_data.py --from_dataset datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --output %TILES_JSON% --tile_size %WINDOW_SIZE%
 if %ERRORLEVEL% neq 0 ( echo ERROR: create_tile_level_json_data.py failed. & exit /b 1 )
-python train_block2vec.py --json_file %TILES_JSON% --output_dir "%B2V_OUTPUT%" --embedding_dim %EMBEDDING_DIM% --vocab_size %NUM_TILES% --epochs 1000 --batch_size 32
+python train_block2vec.py --json_file %TILES_JSON% --output_dir "%B2V_OUTPUT%" --embedding_dim %EMBEDDING_DIM% --vocab_size %NUM_TILES% --epochs 200 --batch_size 32
 if %ERRORLEVEL% neq 0 ( echo ERROR: train_block2vec.py failed. & exit /b 1 )
 
 set TEXT_ENCODER_FLAGS=

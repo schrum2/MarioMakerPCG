@@ -69,7 +69,7 @@ if %ERRORLEVEL% neq 0 ( echo ERROR: create_mario_maker_random_captions.py failed
 echo === Step 1b: Training Skip-Gram tile embeddings ===
 python create_tile_level_json_data.py --from_dataset datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --output %TILES_JSON% --tile_size %WINDOW_SIZE%
 if %ERRORLEVEL% neq 0 ( echo ERROR: create_tile_level_json_data.py failed. & exit /b 1 )
-python train_skipgram.py --json_file %TILES_JSON% --output_dir "%SG_OUTPUT%" --embedding_dim %EMBEDDING_DIM% --vocab_size %NUM_TILES% --epochs 1000 --batch_size 32 --negative_samples 10
+python train_skipgram.py --json_file %TILES_JSON% --output_dir "%SG_OUTPUT%" --embedding_dim %EMBEDDING_DIM% --vocab_size %NUM_TILES% --epochs 200 --batch_size 32 --negative_samples 10
 if %ERRORLEVEL% neq 0 ( echo ERROR: train_skipgram.py failed. & exit /b 1 )
 
 echo === Step 2: Training unconditional diffusion model (with skipgram embeddings) ===
