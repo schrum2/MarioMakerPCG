@@ -41,6 +41,7 @@ def main():
     parser.add_argument('--use_class_weights', action='store_true', help='Use inverse-frequency class weights to upweight rare center tiles')
     parser.add_argument('--focal_gamma', type=float, default=0.0, help='Focal loss gamma. 0 = disabled')
     parser.add_argument('--label_smoothing', type=float, default=0.0, help='Label smoothing (not used for BCE negative sampling, kept for future)')
+    parser.add_argument('--save_every', type=int, default=20, help='Save checkpoint every N epochs. 0 disables periodic checkpointing.')
 
     args = parser.parse_args()
 
@@ -91,6 +92,10 @@ def main():
     plotter.running = True
     plot_thread.start()
 
+    def save_checkpoint(model, output_dir, epoch):
+        checkpoint_dir = os.path.join(output_dir, f'checkpoint_epoch{epoch}')
+        model.save_pretrained(checkpoint_dir)
+
     for epoch in range(args.epochs):
         total_loss = 0
         # Per-class accumulators for diagnostics
@@ -137,6 +142,9 @@ def main():
 
         # Update the plot
         plotter.update_plot()
+
+        if args.save_every > 0 and (epoch + 1) % args.save_every == 0 and epoch + 1 < args.epochs:
+            save_checkpoint(model, args.output_dir, epoch + 1)
 
     print("Done: show nearest neighbors of each tile")
     for tile_id in range(vocab_size):
