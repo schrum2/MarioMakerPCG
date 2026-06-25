@@ -43,6 +43,16 @@ echo === Step 3: Converting .json files to ASCII ===
 python mm2_json_to_ascii.py "%JSON_DIR%" "%ASCII_DIR%"
 if %ERRORLEVEL% neq 0 ( echo ERROR: mm2_json_to_ascii.py failed. & exit /b 1 )
 
+REM Record the name filter and the level count (one .txt per level) so
+REM summarize_dataset.py can pick them up later when it summarizes the dataset.
+set LEVEL_COUNT=0
+for %%F in ("%ASCII_DIR%\*.txt") do set /a LEVEL_COUNT+=1
+(
+echo name=%NAME%
+echo requested_count=%COUNT%
+echo levels_extracted=%LEVEL_COUNT%
+)>"%OUTPUT%\extract_info.txt"
+
 echo === Done! ===
 echo   BCDs:   %BCD_DIR%
 echo   JSON:   %JSON_DIR%
