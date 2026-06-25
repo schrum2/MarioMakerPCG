@@ -1,5 +1,5 @@
 @echo off
-REM Usage: run_full_pipeline_skipgram.bat <input> [model] [text_encoder] [type] [game] [seed] [embedding_dim]
+REM Usage: run_full_pipeline_skipgram.bat <input> [model] [text_encoder] [type] [game] [seed] [embedding_dim] [window_size]
 REM Same as run_full_pipeline_block2vec.bat but the diffusion model is trained on
 REM learned skip-gram tile embeddings instead of Block2Vec embeddings.
 REM
@@ -10,6 +10,7 @@ REM [type]         defaults to "regular"
 REM [game]         defaults to "MM"
 REM [seed]         defaults to 0
 REM [embedding_dim] block embedding size, defaults to 32 (MM has ~69 tile types)
+REM [window_size]  odd integer window size, defaults to 3
 cd ..
 
 set INPUT=%~1
@@ -19,6 +20,7 @@ set TYPE=%~4
 set GAME=%~5
 set SEED=%~6
 set EMBEDDING_DIM=%~7
+set WINDOW_SIZE=%~8
 
 if "%INPUT%"=="" (
     echo ERROR: Must provide input path as first argument.
@@ -30,6 +32,7 @@ if "%GAME%"=="" set GAME=MM
 if "%SEED%"=="" set SEED=0
 if "%TEXT_ENCODER%"=="" set TEXT_ENCODER=MLM
 if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=32
+if "%WINDOW_SIZE%"=="" set WINDOW_SIZE=3
 
 REM Map a text encoder name to its HuggingFace model id.
 set PRETRAINED_MODEL_NAME=
@@ -57,14 +60,14 @@ for %%I in ("%INPUT%") do set "INPUT_DIR=%%~dpI"
 set LLM_ASCII_DIR=%INPUT_DIR%ascii_tokens
 
 REM Skip-gram embedding artifacts.
-set TILES_JSON=datasets\%GAME%_5x5_tiles-%TYPE%.json
-set SG_OUTPUT=%GAME%-skipgram-embeddings-%EMBEDDING_DIM%
+set TILES_JSON=datasets\%GAME%_%WINDOW_SIZE%x%WINDOW_SIZE%_tiles-%TYPE%.json
+set SG_OUTPUT=%GAME%-skipgram-embeddings-%EMBEDDING_DIM%-w%WINDOW_SIZE%
 
 set MLM_OUTPUT=%GAME%-MLM-%TYPE%%SEED%
 if /I "%TEXT_ENCODER%"=="MLM" (
-    set DIFF_OUTPUT=%GAME%-conditional-skipgram%EMBEDDING_DIM%-%TYPE%%SEED%
+    set DIFF_OUTPUT=%GAME%-conditional-skipgram%EMBEDDING_DIM%-w%WINDOW_SIZE%-%TYPE%%SEED%
 ) else (
-    set DIFF_OUTPUT=%GAME%-conditional-%TEXT_ENCODER%-skipgram%EMBEDDING_DIM%-%TYPE%%SEED%
+    set DIFF_OUTPUT=%GAME%-conditional-%TEXT_ENCODER%-skipgram%EMBEDDING_DIM%-w%WINDOW_SIZE%-%TYPE%%SEED%
 )
 
 REM Used to auto-answer "y" to train_diffusion.py's resume-from-checkpoint prompt.
@@ -88,7 +91,7 @@ python create_mario_maker_random_captions.py --json %CAPTIONED_OUTPUT% --output 
 if %ERRORLEVEL% neq 0 ( echo ERROR: create_mario_maker_random_captions.py failed. & exit /b 1 )
 
 echo === Step 1b: Training Skip-Gram tile embeddings ===
-python create_tile_level_json_data.py --from_dataset datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --output %TILES_JSON% --tile_size 5
+python create_tile_level_json_data.py --from_dataset datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --output %TILES_JSON% --tile_size %WINDOW_SIZE%
 if %ERRORLEVEL% neq 0 ( echo ERROR: create_tile_level_json_data.py failed. & exit /b 1 )
 python train_skipgram.py --json_file %TILES_JSON% --output_dir "%SG_OUTPUT%" --embedding_dim %EMBEDDING_DIM% --vocab_size %NUM_TILES% --epochs 1000 --batch_size 32 --negative_samples 10
 if %ERRORLEVEL% neq 0 ( echo ERROR: train_skipgram.py failed. & exit /b 1 )

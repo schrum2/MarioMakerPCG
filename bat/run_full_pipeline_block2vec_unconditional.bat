@@ -1,5 +1,5 @@
 @echo off
-REM Usage: run_full_pipeline_block2vec_unconditional.bat <input> [type] [game] [seed] [embedding_dim]
+REM Usage: run_full_pipeline_block2vec_unconditional.bat <input> [type] [game] [seed] [embedding_dim] [window_size]
 REM Same as run_full_pipeline_block2vec.bat (learned Block2Vec tile embeddings)
 REM but the diffusion model is trained UNCONDITIONALLY (no text conditioning).
 REM There is no text encoder and no captioning, so the LLM/Ollama step, the
@@ -10,6 +10,7 @@ REM [type]         defaults to "regular"
 REM [game]         defaults to "MM"
 REM [seed]         defaults to 0
 REM [embedding_dim] block embedding size, defaults to 32 (MM has ~69 tile types)
+REM [window_size]  odd integer window size, defaults to 3
 cd ..
 
 set INPUT=%~1
@@ -17,6 +18,7 @@ set TYPE=%~2
 set GAME=%~3
 set SEED=%~4
 set EMBEDDING_DIM=%~5
+set WINDOW_SIZE=%~6
 
 if "%INPUT%"=="" (
     echo ERROR: Must provide input path as first argument.
@@ -26,6 +28,7 @@ if "%TYPE%"=="" set TYPE=regular
 if "%GAME%"=="" set GAME=MM
 if "%SEED%"=="" set SEED=0
 if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=32
+if "%WINDOW_SIZE%"=="" set WINDOW_SIZE=3
 
 set TILESET=mm2_tileset_we.json
 set NUM_TILES=69
@@ -40,11 +43,11 @@ set RAW_OUTPUT=datasets\%GAME%_Levels-%TYPE%.json
 set CAPTIONED_OUTPUT=datasets\%GAME%_LevelsAndCaptions-%TYPE%.json
 
 REM Block embedding artifacts.
-set TILES_JSON=datasets\%GAME%_5x5_tiles-%TYPE%.json
-set B2V_OUTPUT=%GAME%-block2vec-embeddings-%EMBEDDING_DIM%
+set TILES_JSON=datasets\%GAME%_%WINDOW_SIZE%x%WINDOW_SIZE%_tiles-%TYPE%.json
+set B2V_OUTPUT=%GAME%-block2vec-embeddings-%EMBEDDING_DIM%-w%WINDOW_SIZE%
 
 REM "-b2v" in the name keeps these models separate from the one-hot runs.
-set DIFF_OUTPUT=%GAME%-unconditional-b2v%EMBEDDING_DIM%-%TYPE%%SEED%
+set DIFF_OUTPUT=%GAME%-unconditional-b2v%EMBEDDING_DIM%-w%WINDOW_SIZE%-%TYPE%%SEED%
 
 REM Used to auto-answer "y" to train_diffusion.py's resume-from-checkpoint prompt.
 set YES_FILE=%TEMP%\mariover_yes.txt
@@ -70,7 +73,7 @@ echo === Step 1b: Training Block2Vec tile embeddings ===
 REM Slice 5x5 windows straight from the integer-encoded train scenes so the tile
 REM ids line up with the diffusion model, then learn an embedding per tile.
 REM --vocab_size pins the table to the full tileset so every id has a row.
-python create_tile_level_json_data.py --from_dataset datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --output %TILES_JSON% --tile_size 5
+python create_tile_level_json_data.py --from_dataset datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --output %TILES_JSON% --tile_size %WINDOW_SIZE%
 if %ERRORLEVEL% neq 0 ( echo ERROR: create_tile_level_json_data.py failed. & exit /b 1 )
 python train_block2vec.py --json_file %TILES_JSON% --output_dir "%B2V_OUTPUT%" --embedding_dim %EMBEDDING_DIM% --vocab_size %NUM_TILES% --epochs 1000 --batch_size 32
 if %ERRORLEVEL% neq 0 ( echo ERROR: train_block2vec.py failed. & exit /b 1 )
