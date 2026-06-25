@@ -20,7 +20,7 @@ REM Number of tile types in mm2_tileset_we.json (68 tiles + the "_" padding tile
 set NUM_TILES=69
 set TILESET=mm2_tileset_we.json
 
-set TILES_JSON=datasets\%GAME%_3x3_tiles-%TYPE%.json
+set TILES_JSON=datasets\%GAME%_5x5_tiles-%TYPE%.json
 set B2V_OUTPUT=%GAME%-block2vec-embeddings-%EMBEDDING_DIM%
 set DIFF_OUTPUT=%GAME%-unconditional-block2vec-%EMBEDDING_DIM%%SEED%
 set SAMPLES_OUTPUT=%DIFF_OUTPUT%-samples
@@ -29,9 +29,9 @@ REM Used to auto-answer "y" to train_diffusion.py's resume-from-checkpoint promp
 set YES_FILE=%TEMP%\mariover_yes.txt
 echo y> "%YES_FILE%"
 
-REM 1) Build the 3x3 tile-window dataset straight from the integer-encoded scenes
+REM 1) Build the 5x5 tile-window dataset straight from the integer-encoded scenes
 REM    so the tile-id space matches the diffusion model exactly.
-python create_tile_level_json_data.py --from_dataset datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --output %TILES_JSON% --tile_size 3
+python create_tile_level_json_data.py --from_dataset datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --output %TILES_JSON% --tile_size 5
 
 REM 2) Train the Block2Vec embeddings. --vocab_size pins the embedding table to the
 REM    full tileset so every tile id has a row even if it never appears in a window.
