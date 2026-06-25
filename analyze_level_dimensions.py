@@ -35,21 +35,26 @@ from build_dataset_with_ascii import (  # noqa: E402
 )
 
 
-def level_dimensions(rows, empty_chars=" "):
-    """Return (width, height) of one level's CONTENT bounding box.
+def level_content_box(rows, empty_chars=" "):
+    """Return one level's CONTENT bounding box as a list of equal-width strings.
 
     Sky padding is excluded on all four sides: after stripping trailing
     newlines, the empty (sky/air) characters in `empty_chars` are treated as
-    blank, and the tightest box that still contains every non-empty tile is
-    measured. So a level stored on the full canvas but whose tiles only span,
-    say, 100 columns and 14 rows measures 100x14, not the padded canvas size.
+    blank, and the tightest box that still contains every non-empty tile is cut
+    out. So a level stored on the full canvas but whose tiles only span, say,
+    100 columns and 14 rows comes back as 14 strings of length 100, not the
+    padded canvas size.
+
+    Ragged rows (shorter than the box) are right-filled with the first empty
+    char so every returned row is exactly the box width. Returns [] for a level
+    with no content at all.
 
     In mm2_tileset_we.json the air tile is the space character (and '-' is a
     real Lift tile, NOT sky), so the default treats only spaces as empty.
-    Returns (0, 0) for a level with no content at all.
     """
     rows = [r.rstrip("\r\n") for r in rows]
     empty = set(empty_chars)
+    fill = empty_chars[0] if empty_chars else " "
 
     def row_has_content(r):
         return any(ch not in empty for ch in r)
@@ -57,10 +62,9 @@ def level_dimensions(rows, empty_chars=" "):
     # Vertical extent: first and last rows that hold any non-empty tile.
     top = next((i for i, r in enumerate(rows) if row_has_content(r)), None)
     if top is None:
-        return 0, 0
+        return []
     bottom = next(i for i in range(len(rows) - 1, -1, -1) if row_has_content(rows[i]))
     content_rows = rows[top: bottom + 1]
-    height = len(content_rows)
 
     # Horizontal extent: leftmost and rightmost columns holding a non-empty
     # tile across the content rows.
@@ -73,7 +77,20 @@ def level_dimensions(rows, empty_chars=" "):
         for r in content_rows if row_has_content(r)
     )
     width = right - left + 1
-    return width, height
+    return [r[left: right + 1].ljust(width, fill) for r in content_rows]
+
+
+def level_dimensions(rows, empty_chars=" "):
+    """Return (width, height) of one level's content bounding box.
+
+    Thin wrapper over level_content_box so the scatter plot here and the size
+    bucketing in bucket_levels_by_size.py measure a level the exact same way.
+    Returns (0, 0) for a level with no content at all.
+    """
+    box = level_content_box(rows, empty_chars=empty_chars)
+    if not box:
+        return 0, 0
+    return len(box[0]), len(box)
 
 
 def collect_dimensions(input_path, empty_chars=" "):
