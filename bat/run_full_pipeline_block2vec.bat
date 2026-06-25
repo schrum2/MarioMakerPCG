@@ -10,7 +10,7 @@ REM [text_encoder] "MLM" (default), "MiniLM", or "GTE"
 REM [type]         defaults to "regular"
 REM [game]         defaults to "MM"
 REM [seed]         defaults to 0
-REM [embedding_dim] block embedding size, defaults to 16
+REM [embedding_dim] block embedding size, defaults to 64 (MM has ~69 tile types)
 cd ..
 
 set INPUT=%~1
@@ -30,7 +30,7 @@ if "%TYPE%"=="" set TYPE=regular
 if "%GAME%"=="" set GAME=MM
 if "%SEED%"=="" set SEED=0
 if "%TEXT_ENCODER%"=="" set TEXT_ENCODER=MLM
-if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=16
+if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=32
 
 REM Map a text encoder name to its HuggingFace model id.
 set PRETRAINED_MODEL_NAME=

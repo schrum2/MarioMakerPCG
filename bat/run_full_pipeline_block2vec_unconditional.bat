@@ -1,34 +1,31 @@
 @echo off
-REM Usage: run_full_pipeline_block2vec_unconditional.bat <input> [model] [type] [game] [seed] [embedding_dim]
-REM Same as run_full_pipeline_block2vec.bat (LLM-captioned dataset, learned
-REM Block2Vec tile embeddings) but the diffusion model is trained UNCONDITIONALLY
-REM (no text conditioning). There is no text encoder, so the MLM/MiniLM/GTE step
-REM and the caption-adherence evaluation are dropped.
+REM Usage: run_full_pipeline_block2vec_unconditional.bat <input> [type] [game] [seed] [embedding_dim]
+REM Same as run_full_pipeline_block2vec.bat (learned Block2Vec tile embeddings)
+REM but the diffusion model is trained UNCONDITIONALLY (no text conditioning).
+REM There is no text encoder and no captioning, so the LLM/Ollama step, the
+REM MLM/MiniLM/GTE step, and the caption-adherence evaluation are all dropped.
 REM
 REM <input>        path to a .txt ASCII level file or folder of .txt files
-REM [model]        Ollama model for captioning, defaults to "qwen2.5:14b"
 REM [type]         defaults to "regular"
 REM [game]         defaults to "MM"
 REM [seed]         defaults to 0
-REM [embedding_dim] block embedding size, defaults to 16
+REM [embedding_dim] block embedding size, defaults to 32 (MM has ~69 tile types)
 cd ..
 
 set INPUT=%~1
-set MODEL=%~2
-set TYPE=%~3
-set GAME=%~4
-set SEED=%~5
-set EMBEDDING_DIM=%~6
+set TYPE=%~2
+set GAME=%~3
+set SEED=%~4
+set EMBEDDING_DIM=%~5
 
 if "%INPUT%"=="" (
     echo ERROR: Must provide input path as first argument.
     exit /b 1
 )
-if "%MODEL%"=="" set MODEL=qwen2.5:14b
 if "%TYPE%"=="" set TYPE=regular
 if "%GAME%"=="" set GAME=MM
 if "%SEED%"=="" set SEED=0
-if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=16
+if "%EMBEDDING_DIM%"=="" set EMBEDDING_DIM=32
 
 set TILESET=mm2_tileset_we.json
 set NUM_TILES=69
@@ -42,9 +39,6 @@ if /I "%GAME%"=="MM" (
 set RAW_OUTPUT=datasets\%GAME%_Levels-%TYPE%.json
 set CAPTIONED_OUTPUT=datasets\%GAME%_LevelsAndCaptions-%TYPE%.json
 
-for %%I in ("%INPUT%") do set "INPUT_DIR=%%~dpI"
-set LLM_ASCII_DIR=%INPUT_DIR%ascii_tokens
-
 REM Block embedding artifacts.
 set TILES_JSON=datasets\%GAME%_5x5_tiles-%TYPE%.json
 set B2V_OUTPUT=%GAME%-block2vec-embeddings-%EMBEDDING_DIM%
@@ -56,31 +50,15 @@ REM Used to auto-answer "y" to train_diffusion.py's resume-from-checkpoint promp
 set YES_FILE=%TEMP%\mariover_yes.txt
 echo y> "%YES_FILE%"
 
-REM -- Ollama setup ---------------------------------------------------------
-ollama list >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo Ollama not running. Starting ollama server...
-    start /min "" ollama serve
-    echo Waiting for Ollama to initialise...
-    timeout /t 6 /nobreak >nul
-)
-
-echo Pulling %MODEL% ^(no-op if already present^)...
-ollama pull %MODEL%
-if %ERRORLEVEL% neq 0 (
-    echo ERROR: Failed to pull %MODEL%. Is Ollama running?
-    exit /b 1
-)
-
 echo === Step 0: Plotting complete-level size distribution ===
 python analyze_level_dimensions.py --input "%INPUT%" --output datasets\%GAME%_LevelSizeDistribution-%TYPE%.png --csv datasets\%GAME%_LevelSizeDistribution-%TYPE%.csv --title "%GAME% complete level size distribution (%TYPE%)"
 if %ERRORLEVEL% neq 0 ( echo ERROR: analyze_level_dimensions.py failed. & exit /b 1 )
 
-echo === Step 1: Preparing dataset with LLM captions ===
+echo === Step 1: Preparing dataset with tile-presence captions ===
 python build_dataset_with_ascii.py --input_file "%INPUT%" --output %RAW_OUTPUT% --tileset %TILESET% --sliding_window --stride 20
 if %ERRORLEVEL% neq 0 ( echo ERROR: build_dataset_with_ascii.py failed. & exit /b 1 )
-python MarioMaker_llm_captions.py --dataset %RAW_OUTPUT% --tileset %TILESET% --output %CAPTIONED_OUTPUT% --model %MODEL% --ascii-output-dir "%LLM_ASCII_DIR%" --num-captions 1 --prompt-log MM2_Prompt.txt
-if %ERRORLEVEL% neq 0 ( echo ERROR: MarioMaker_llm_captions.py failed. & exit /b 1 )
+python MarioMaker_create_ascii_captions.py --dataset %RAW_OUTPUT% --tileset %TILESET% --output %CAPTIONED_OUTPUT%
+if %ERRORLEVEL% neq 0 ( echo ERROR: MarioMaker_create_ascii_captions.py failed. & exit /b 1 )
 python split_mario_maker_data.py --json %CAPTIONED_OUTPUT% --seed %SEED%
 if %ERRORLEVEL% neq 0 ( echo ERROR: split_mario_maker_data.py failed. & exit /b 1 )
 python tokenizer.py save --json_file datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --pkl_file datasets\%GAME%_Tokenizer-%TYPE%.pkl
