@@ -16,14 +16,14 @@ from collections import defaultdict
 
 class BucketBatchSampler:
     """
-    Groups dataset samples into batches by scene width so that every batch contains
-    same-width scenes. This allows training on datasets with variable-width scenes
+    Groups dataset samples into batches by scene size so that every batch contains
+    same-shape scenes. This allows training on datasets with variable-size scenes
     since torch.stack requires uniform shapes within a batch.
 
     Args:
         dataset: A LevelDataset whose samples are (scene_tensor, ...) with scene shape (Channels, H, W)
         batch_size (int): Number of samples per batch
-        drop_last (bool): If True, discard incomplete batches at the end of each width bucket
+        drop_last (bool): If True, discard incomplete batches at the end of each size bucket
         shuffle (bool): If True, shuffle samples within buckets and shuffle the batch order
 
     Attributes:
@@ -32,11 +32,17 @@ class BucketBatchSampler:
     """
     def __init__(self, dataset, batch_size, drop_last=True, shuffle=True):
         self.shuffle = shuffle
-        # Group dataset indices by scene width
+        # Group dataset indices by (height, width). A batch is collated with
+        # torch.stack, which needs identical shapes, so every sample in a batch
+        # must share BOTH dimensions. Keying on width alone is fine while every
+        # scene is the same height, but once different size buckets are padded to
+        # different heights (see bucket_levels_by_size.py) two buckets that happen
+        # to share a width would land in one batch and crash the collate. For a
+        # single-height dataset this is identical to the old width-only grouping.
         buckets = defaultdict(list)
         for idx in range(len(dataset)):
-            w = dataset[idx][0].shape[2]  # scene tensor is (C, H, W)
-            buckets[w].append(idx)
+            scene = dataset[idx][0]  # scene tensor is (C, H, W)
+            buckets[(scene.shape[1], scene.shape[2])].append(idx)
 
         self.batches = []
         for indices in buckets.values():
@@ -49,8 +55,11 @@ class BucketBatchSampler:
                     continue
                 self.batches.append(batch)
 
-        # Unique scene widths present in the dataset; used to generate variably-sized benchmark samples at epoch checkpoints during training
-        self.shapes = list(buckets.keys())
+        # Unique scene widths present in the dataset; used to generate variably-sized benchmark
+        # samples at epoch checkpoints during training. Kept as plain widths (not (H, W) pairs) so
+        # callers that pass these straight to the pipeline's `width` keep working. dict.fromkeys
+        # drops duplicate widths while preserving first-seen order.
+        self.shapes = list(dict.fromkeys(w for (_h, w) in buckets))
 
     def __iter__(self):
         # Re-shuffle every epoch so sample order varies across epochs, matching DataLoader(shuffle=True) behavior.
@@ -119,7 +128,7 @@ def create_dataloaders(json_path, val_json, tokenizer, data_mode, augment, num_t
             block_embeddings=block_embeddings
         )
 
-    # BucketBatchSampler groups same-width scenes into each batch, allowing mixed-width datasets.
+    # BucketBatchSampler groups same-size scenes into each batch, allowing mixed-size datasets.
     # batch_size/shuffle/drop_last are owned by the sampler, not passed directly to DataLoader.
     train_sampler = BucketBatchSampler(train_dataset, batch_size, drop_last=True, shuffle=True)
     train_dataloader = DataLoader(

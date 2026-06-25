@@ -754,7 +754,8 @@ def call_ollama(prompt, model, url, timeout, retries, image_b64=None, media_type
         "stream": False,
         "options": {
             "temperature": 0,
-            "seed": 42
+            "seed": 42,
+            "num_ctx": 8192
         },
     }
     if image_b64:
@@ -875,6 +876,23 @@ def build_avoidance_clause(bad_chars):
         f"ASCII characters."
     )
 
+_UNICODE_NORMALIZE = {
+    '\u2018': "'", '\u2019': "'",   # left/right single quotes
+    '\u201c': '"', '\u201d': '"',   # left/right double quotes
+    '\u2014': '-', '\u2013': '-',   # em dash, en dash
+    '\u2026': '...',                # ellipsis
+    '\u00e9': 'e', '\u00e8': 'e',  # accented e (common in French loanwords)
+    '\u00e0': 'a', '\u00e2': 'a',  # accented a
+    '\u00f4': 'o',                  # accented o
+    '\u00fc': 'u', '\u00fb': 'u',  # accented u
+    '\u00b7': '.', '\u2022': '.',   # middle dot, bullet
+    '\u2019': "'",                  # right single quote (duplicate for safety)
+}
+
+def normalize_to_ascii(text):
+    """Replace common non-ASCII characters with ASCII equivalents."""
+    return ''.join(_UNICODE_NORMALIZE.get(ch, ch) for ch in text)
+
 
 def parse_captions(raw_response):
     """Parse the LLM's JSON array of captions, with a line-based fallback.
@@ -891,7 +909,7 @@ def parse_captions(raw_response):
     try:
         parsed = json.loads(text)
         if isinstance(parsed, list) and all(isinstance(x, str) for x in parsed):
-            return [c.strip() for c in parsed if c.strip()]
+            return [normalize_to_ascii(c).strip() for c in parsed if c.strip()]
     except json.JSONDecodeError:
         pass
 
@@ -1107,6 +1125,8 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
         print(f"[{i + 1}/{total}] {name}{image_tag} ...", end=" ", flush=True)
         captions = []
+        last_raw = ""
+        start_time = time.time()
         try:
             for attempt in range(max_reprompts):
                 # Every attempt -- including the first attempt of a brand-new scene --
@@ -1132,6 +1152,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                     raw = call_ollama(active_prompt, model, url, timeout, retries,
                                       image_b64=image_b64, media_type=media_type)
                 captions = parse_captions(raw)
+                last_raw = raw
 
                 bad_chars = find_non_ascii_chars(captions) if captions else []
                 if not bad_chars:
@@ -1152,8 +1173,12 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
         if not captions:
             print("ERROR: no usable captions after reprompts; dropping level from output")
+            print(f"  Last raw response: {last_raw!r}")  # ADD THIS
             errors += 1
             continue
+
+        elapsed = time.time() - start_time
+        print(f"done ({elapsed:.1f}s)") 
 
         # The model occasionally returns more than asked; keep only what we want.
         if len(captions) > num_captions:
@@ -1306,7 +1331,7 @@ def main():
     parser.add_argument(
         "--timeout",
         type=int,
-        default=120,
+        default=400,
         help="Per-request timeout in seconds. Default: 120",
     )
     parser.add_argument(

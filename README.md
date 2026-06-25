@@ -2,7 +2,6 @@
 
 # Setting up
 Run `pip install -r requirements.txt`
-Run `pip install -r requirements_mario_diffusion.txt`
 
 # Running Bat Files
 
