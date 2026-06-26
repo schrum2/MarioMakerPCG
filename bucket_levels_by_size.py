@@ -279,7 +279,11 @@ def main():
     converter = None
     if args.convert_to_extended:
         converter = load_converter("mm2view_to_extended.py", "mm2view_to_extended")
-        print("Converting levels to the extended tile format (mm2view_to_extended.py) before bucketing.")
+        # Reduce onto the same tileset we measure/encode against, so the converter's
+        # surviving glyphs are exactly this tileset's ids (extended_tiles_20.json ...).
+        converter.set_target(args.tileset)
+        print(f"Converting levels to the extended tile format ({os.path.basename(args.tileset)}) "
+              f"via mm2view_to_extended.py before bucketing.")
 
     input_files = collect_input_files(args.input)
     multi = len(input_files) > 1

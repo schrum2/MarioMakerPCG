@@ -1,324 +1,234 @@
 #!/usr/bin/env python3
 """
 mm2view_to_extended.py
-Converts a Mario Maker 2 ASCII level (.txt) to an extended simplified tile format.
+Collapse a Mario Maker 2 ASCII level from the full 69-tile mm2_tileset_we vocab
+down to a smaller "extended" tileset, so diffusion training isn't spread thin over
+dozens of near-empty tile classes.
 
-Like mm2view_to_vglc.py but with ~20 granular tile types instead of collapsing
-everything to generic "enemy" / "ground". VGLC characters are reused where they
-apply so the two formats stay comparable.
+The input levels are already written in the mm2_tileset_we glyph space (# ground,
+k semisolid, g goomba, K koopa, ...). Reducing to a target tileset is then a pure
+per-character remap: every glyph the target keeps stays as-is, and every glyph it
+drops is folded onto its closest survivor.
 
-Output characters -- must match the tile chars in extended_tiles.json exactly:
-    (space) air / empty
-    #   ground (all solid terrain, stone, slopes, warp structures)
-    B   brick (breakable brick)
-    ?   question block
-    c   coin
-    g   goomba / generic enemy
-    K   koopa
-    P   piranha plant (piranha flower, piranha creeper, muncher)
-    t   thwomp
-    ^   spike block / spikes
-    N   note / breakable non-brick block (hidden block, donut block)
-    T   mushroom platform
-    =   bridge (passable bridge platform)
-    k   semisolid platform
-    i   fire flower
-    V   cannon / shooter (top and bottom)
-    |   pipe -- upright (↑ / |) and ceiling (↓); cap and body collapse to one
-        glyph. Sideways pipes (← / →) are treated as solid ground (#).
+"Closest" is decided from the tags in mm2_tileset_we.json -- each glyph lists a
+broad collision/behaviour class (solid / passable / enemy / collectable / hazard)
+followed by more specific tags. A dropped tile is matched to a kept tile of the
+same class, preferring the one that shares the most specific tags (so koopa folds
+onto another ground enemy, a cloud block onto another solid platform, a power-up
+onto another collectable, an environmental hazard onto spikes, and so on). A few
+genuinely ambiguous folds are pinned in REPLACEMENT_OVERRIDES below.
+
+Target tilesets, most aggressive to least (see build_extended_tilesets.py):
+    extended_tiles_20.json ... extended_tiles_60.json   (frequency-ranked)
+    extended_tiles.json                                  (hand-picked ~17, default)
+
+Pick one with --tileset (CLI) or set_target() (when imported, e.g. by
+bucket_levels_by_size.py / build_dataset_with_ascii.py).
 
 Usage:
-    python mm2view_to_extended.py input_level.txt [output_level.txt]
+    python mm2view_to_extended.py input_level.txt [output_level.txt] --tileset extended_tiles_30.json
+    python mm2view_to_extended.py --tileset extended_tiles_20.json --show_map
 """
 
 import sys
+import os
+import json
 import argparse
 from pathlib import Path
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+
 VGLC_HEIGHT = 20
+OUT_EMPTY = " "
 
-# ---------------------------------------------------------------------------
-# MM2 source character sets
+# Full source vocabulary the input levels are written in.
+SOURCE_TILESET = os.path.join(HERE, "mm2_tileset_we.json")
+# Default reduction target when nobody calls set_target() -- keeps the existing
+# extended_tiles.json pipeline working unchanged.
+DEFAULT_TARGET = os.path.join(HERE, "extended_tiles.json")
 
-MM2_GROUND = {
-    "#",   # ground
-    "H",   # hard block
-    "I",   # ice block
-    "C",   # crate
-    "T",   # tree
-    "=",   # castle bridge
-    "N",   # note block
-    "p",   # p block (togglable solid)
-    "O",   # on/off block (togglable solid)
-    "*",   # blinking block (togglable solid)
-    "»",   # conveyor belt
-    "¼",   # fast conveyor belt
-    "J",   # jumping machine
-    "Ù",   # exclamation block
-    "É",   # skewer (solid moving hazard)
-    "Ë",   # icicle
-    "Ø",   # wall cannon (solid structure)
+# The json->ascii export emits a direction-specific arrow per pipe; the tilesets
+# keep only the single pipe glyph "|". Fold the arrows back before remapping so a
+# pipe reduces as a pipe instead of an unknown tile.
+PIPE_ARROWS = {"→": "|", "←": "|", "↑": "|", "↓": "|"}
+
+# Broad class each glyph belongs to, read off the leading tags. Order matters:
+# an enemy that also carries "hazard" is classed as an enemy, not a hazard.
+_CLASS_TAGS = ["enemy", "collectable", "hazard", "solid", "passable"]
+# Where a class falls back when the target keeps nothing of that kind. These
+# glyphs (generic enemy, coin, spikes, ground, air) sit near the top of the
+# frequency ranking, so they survive in every target tileset.
+_CLASS_FALLBACK = {
+    "enemy": "g",
+    "collectable": "c",
+    "hazard": "^",
+    "solid": "#",
+    "passable": OUT_EMPTY,
 }
 
-MM2_BREAKABLE      = {"B"}           # breakable brick → S
-MM2_QUESTION       = {"?"}           # question block → ?
-MM2_COINS          = {"¢", "$", "£"} # coin, red coin, big coin → o
-MM2_PIPE_UPRIGHT   = {"|", "↑"}      # standard pipe (mouth up)   → <>[]]
-MM2_PIPE_DOWN      = {"↓"}           # ceiling pipe (mouth down)  → (){}
-MM2_PIPE_SIDEWAYS  = {"←", "→"}     # sideways pipe              → X (ground)
-MM2_PIPE           = MM2_PIPE_UPRIGHT | MM2_PIPE_DOWN | MM2_PIPE_SIDEWAYS
-MM2_WARP_AS_GROUND = {"D", "W"}      # door / warp box → X
+# Hand-pinned folds for tiles whose nearest-by-tags answer is a judgement call.
+# A door is a passable warp but shares its only meaningful tag ("warp") with the
+# pipe, so we keep the warp structure rather than dissolving it to open air.
+REPLACEMENT_OVERRIDES = {
+    "D": "|",   # door -> pipe (both warps; keep a structure, don't blank it out)
+}
 
-MM2_CANNON         = {"V"}           # bullet bill blaster → B / b
 
-MM2_KOOPA          = {"K"}                    # koopa → K
-MM2_PIRANHA        = {"P", "e", ","}          # piranha flower / creeper / muncher → P
-MM2_SPIKE          = {"^", "Ç"}              # spike block, spikes → ^
-MM2_MUSHROOM_PLAT  = {"³"}                   # mushroom platform → M
-MM2_BRIDGE         = {"·"}                   # bridge → =
-MM2_SEMISOLID      = {"´", "Â"}             # semisolid / half-collision platform → _
-MM2_STONE          = {"S"}                   # stone block → W
-MM2_FIRE_FLOWER    = {"i"}                   # fire flower → F
-MM2_BREAKABLE_NB   = {"d", "Ã"}             # donut block, falling platform → N
+def _load_tiles(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)["tiles"]
 
-MM2_GOOMBA         = {"g"}                   # goomba → E (explicit so it's documented)
-MM2_THWOMP         = {"t"}                   # thwomp → T
 
-# All remaining enemies → E (generic fallback)
-MM2_ENEMIES_GENERIC = set(
-    "m o s b L Z y < u X x @ ~ q w Y F % & r a n R ! 9 j + ¡ ; A v [ 1 2 3 4 5 6 7 µ"
-    .split()
-)
+def _class_of(tags):
+    for cls in _CLASS_TAGS:
+        if cls in tags:
+            return cls
+    return "passable"
 
-# ---------------------------------------------------------------------------
-# Output characters — must match the chars in extended_tiles.json exactly.
-# extended_tiles.json has no dedicated stone/cannon-bottom glyph, so stone folds
-# into ground "#" and the cannon bottom shares the shooter glyph "V"; both pipe
-# orientations collapse to the single pipe glyph "|".
-OUT_EMPTY    = " "
-OUT_GROUND   = "#"
-OUT_BRICK    = "B"
-OUT_QUESTION = "?"
-OUT_COIN     = "c"
-OUT_ENEMY    = "g"
-OUT_KOOPA    = "K"
-OUT_PIRANHA  = "P"
-OUT_SPIKE    = "^"
-OUT_MUSHROOM = "T"
-OUT_BREAK_NB = "N"
-OUT_CANNON_T = "V"
-OUT_CANNON_B = "V"
-OUT_BRIDGE   = "="
-OUT_SEMISOLID= "k"
-OUT_STONE    = "#"
-OUT_FIRE_FL  = "i"
-OUT_THWOMP   = "t"
-PIPE_UPRIGHT = "|"   # upright pipe (cap and body collapse to one char)
-PIPE_DOWN    = "|"   # ceiling pipe (cap and body)
 
-# ---------------------------------------------------------------------------
+def build_replacement_map(target_path, source_path=SOURCE_TILESET):
+    """Return {source_glyph: target_glyph} folding the full source vocab onto the
+    glyphs the target tileset keeps. Pipe arrows are included as pipe aliases."""
+    source = _load_tiles(source_path)
+    target = _load_tiles(target_path)
+    kept = list(target.keys())
+    kept_set = set(kept)
+    # Earlier-listed kept glyphs are more frequent (the tilesets are written in
+    # frequency order); used to break ties toward the more generic survivor.
+    rank = {g: i for i, g in enumerate(kept)}
 
-def load_level(path: str) -> list[str]:
+    def best_fold(glyph, tags):
+        if glyph in REPLACEMENT_OVERRIDES and REPLACEMENT_OVERRIDES[glyph] in kept_set:
+            return REPLACEMENT_OVERRIDES[glyph]
+        cls = _class_of(tags)
+        # Candidate survivors of the same class. Hazards exclude living enemies so
+        # a saw/burner folds onto spikes, not onto a goomba that merely shares
+        # the "hazard" tag.
+        pool = [g for g in kept if cls in source.get(g, target[g])]
+        if cls == "hazard":
+            pool = [g for g in pool if "enemy" not in target[g]]
+        src_tags = set(tags)
+        best_g, best_score = None, -1
+        for g in pool:
+            if g == glyph:
+                continue
+            shared = src_tags & set(target[g])
+            score = len(shared - {cls})   # reward specific-tag overlap
+            if score > best_score or (score == best_score and rank[g] < rank.get(best_g, 1 << 30)):
+                best_g, best_score = g, score
+        # A passable object with nothing specific in common (a lone door-less,
+        # platform-less oddity) is just open space.
+        if cls == "passable" and best_score < 1:
+            return OUT_EMPTY
+        if best_g is not None:
+            return best_g
+        return _CLASS_FALLBACK[cls]
+
+    mapping = {}
+    for glyph, tags in source.items():
+        mapping[glyph] = glyph if glyph in kept_set else best_fold(glyph, tags)
+    # Pipe-direction arrows ride along with whatever "|" maps to.
+    for arrow, pipe in PIPE_ARROWS.items():
+        mapping[arrow] = mapping.get(pipe, pipe if pipe in kept_set else OUT_EMPTY)
+    return mapping
+
+
+# Active reduction map. Lazily built against DEFAULT_TARGET so importing modules
+# that just call convert_level() keep working; call set_target() to switch.
+_active_map = None
+_active_target = None
+
+
+def set_target(target_path):
+    """Point the converter at a target tileset (path to an extended_tiles*.json)."""
+    global _active_map, _active_target
+    _active_map = build_replacement_map(target_path)
+    _active_target = target_path
+    return _active_map
+
+
+def _ensure_map():
+    if _active_map is None:
+        set_target(DEFAULT_TARGET)
+    return _active_map
+
+
+def load_level(path):
     with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-    return [l.rstrip("\n") for l in lines]
+        return [l.rstrip("\n") for l in f.readlines()]
 
 
-def normalize_grid(lines: list[str]) -> list[list[str]]:
-    if not lines:
-        return []
-    width = max(len(l) for l in lines)
-    grid = []
-    for l in lines:
-        row = list(l)
-        row += [" "] * (width - len(row))
-        grid.append(row)
-    return grid
-
-
-def is_pipe_tile(ch: str) -> bool:
-    return ch in MM2_PIPE
-
-
-def classify_pipe_cell(grid: list[list[str]], row: int, col: int) -> str:
-    ch = grid[row][col]
-    if ch in MM2_PIPE_SIDEWAYS:
-        return OUT_GROUND
-    if ch in MM2_PIPE_DOWN:
-        return PIPE_DOWN
-    return PIPE_UPRIGHT
-
-
-def find_cannon_positions(grid: list[list[str]]) -> dict[tuple[int, int], str]:
-    result = {}
-    height = len(grid)
-    width  = len(grid[0]) if height > 0 else 0
-    for r in range(height):
-        for c in range(width):
-            if grid[r][c] in MM2_CANNON:
-                result[(r, c)] = OUT_CANNON_T
-                if r + 1 < height:
-                    below = grid[r + 1][c]
-                    if below == " " or below not in MM2_GROUND:
-                        result[(r + 1, c)] = OUT_CANNON_B
-    return result
-
-
-def convert_cell(ch: str, grid: list[list[str]], row: int, col: int,
-                 cannon_map: dict) -> str:
-    if (row, col) in cannon_map:
-        return cannon_map[(row, col)]
-
-    if ch == " ":
-        return OUT_EMPTY
-
-    # Specific enemies (check before generic fallback)
-    if ch in MM2_KOOPA:
-        return OUT_KOOPA
-    if ch in MM2_PIRANHA:
-        return OUT_PIRANHA
-    if ch in MM2_THWOMP:
-        return OUT_THWOMP
-    if ch in MM2_GOOMBA or ch in MM2_ENEMIES_GENERIC:
-        return OUT_ENEMY
-
-    # Coins
-    if ch in MM2_COINS:
-        return OUT_COIN
-
-    # Pipe → geometry-aware classification
-    if ch in MM2_PIPE:
-        return classify_pipe_cell(grid, row, col)
-
-    # Brick
-    if ch in MM2_BREAKABLE:
-        return OUT_BRICK
-
-    # Question block
-    if ch in MM2_QUESTION:
-        return OUT_QUESTION
-
-    # Spike blocks / spikes
-    if ch in MM2_SPIKE:
-        return OUT_SPIKE
-
-    # Mushroom platform
-    if ch in MM2_MUSHROOM_PLAT:
-        return OUT_MUSHROOM
-
-    # Bridge
-    if ch in MM2_BRIDGE:
-        return OUT_BRIDGE
-
-    # Semisolid / pass-through platform
-    if ch in MM2_SEMISOLID:
-        return OUT_SEMISOLID
-
-    # Stone block
-    if ch in MM2_STONE:
-        return OUT_STONE
-
-    # Fire flower
-    if ch in MM2_FIRE_FLOWER:
-        return OUT_FIRE_FL
-
-    # Breakable non-brick blocks
-    if ch in MM2_BREAKABLE_NB:
-        return OUT_BREAK_NB
-
-    # Warp structures → solid ground
-    if ch in MM2_WARP_AS_GROUND:
-        return OUT_GROUND
-
-    # Solid ground
-    if ch in MM2_GROUND:
-        return OUT_GROUND
-
-    # Slopes
-    if ch in "/\\":
-        return OUT_GROUND
-
-    return OUT_EMPTY
-
-
-def crop_and_pad(grid: list[list[str]], target: int = VGLC_HEIGHT) -> list[list[str]]:
-    while len(grid) > target and all(c == " " for c in grid[0]):
+def crop_and_pad(grid, target=VGLC_HEIGHT):
+    """Fix the level to `target` rows: drop empty rows off the top, keep the
+    bottom `target`, and pad short levels with air on top (bottom-aligned)."""
+    while len(grid) > target and grid[0].strip() == "":
         grid = grid[1:]
     if len(grid) > target:
         grid = grid[-target:]
-    width = len(grid[0]) if grid else 0
+    width = max((len(r) for r in grid), default=0)
+    grid = [r.ljust(width) for r in grid]
     while len(grid) < target:
-        grid.insert(0, [" "] * width)
+        grid.insert(0, " " * width)
     return grid
 
 
-def convert_level(lines: list[str]) -> list[str]:
-    grid = normalize_grid(lines)
-    if not grid:
+def convert_level(lines):
+    """Reduce one level (list of rows) to the active target tileset, returning the
+    converted rows. Fixed to VGLC_HEIGHT rows; trailing all-air columns trimmed."""
+    mapping = _ensure_map()
+    if not lines:
         return [OUT_EMPTY * 10] * VGLC_HEIGHT
 
-    grid = crop_and_pad(grid)
-    cannon_map = find_cannon_positions(grid)
+    grid = crop_and_pad(list(lines))
+    out_rows = ["".join(mapping.get(ch, OUT_EMPTY) for ch in row) for row in grid]
 
-    height = len(grid)
-    width  = len(grid[0])
-
-    out_rows = []
-    for r in range(height):
-        out_rows.append("".join(
-            convert_cell(grid[r][c], grid, r, c, cannon_map)
-            for c in range(width)
-        ))
-
-    # Fill implicit spawn-platform gap at the left edge of the bottom two rows
-    if len(out_rows) >= 2:
-        leftmost_x = None
-        for row in out_rows[-2:]:
-            for i, ch in enumerate(row):
-                if ch == OUT_GROUND:
-                    if leftmost_x is None or i < leftmost_x:
-                        leftmost_x = i
-                    break
-        if leftmost_x and leftmost_x > 0:
-            new_rows = list(out_rows)
-            for ri in range(len(new_rows) - 2, len(new_rows)):
-                row = list(new_rows[ri])
-                if OUT_GROUND not in row:
-                    continue
-                for i in range(min(leftmost_x, len(row))):
-                    if row[i] == OUT_EMPTY:
-                        row[i] = OUT_GROUND
-                new_rows[ri] = "".join(row)
-            out_rows = new_rows
-
-    # Trim trailing all-empty columns
-    if out_rows:
-        max_col = 0
-        for row in out_rows:
-            for i in range(len(row) - 1, -1, -1):
-                if row[i] != OUT_EMPTY:
-                    if i > max_col:
-                        max_col = i
-                    break
-        out_rows = [row[:max_col + 1] for row in out_rows]
-
+    # Trim trailing all-air columns so the content box stays tight (the bucketer
+    # measures width off this).
+    max_col = -1
+    for row in out_rows:
+        stripped = row.rstrip(OUT_EMPTY)
+        if len(stripped) - 1 > max_col:
+            max_col = len(stripped) - 1
+    out_rows = [row[:max_col + 1] for row in out_rows]
     return out_rows
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert a Mario Maker 2 ASCII level to the extended tile format."
+        description="Reduce a Mario Maker 2 ASCII level to a smaller extended tileset."
     )
-    parser.add_argument("input", help="Path to the MM2 ASCII level .txt file")
+    parser.add_argument("input", nargs="?", help="Path to the MM2 ASCII level .txt file")
     parser.add_argument("output", nargs="?", default=None,
                         help="Output path (default: print to stdout)")
+    parser.add_argument("--tileset", default=DEFAULT_TARGET,
+                        help="Target tileset JSON (extended_tiles_20.json ... _60.json, "
+                             f"or the default {os.path.basename(DEFAULT_TARGET)}).")
+    parser.add_argument("--show_map", action="store_true",
+                        help="Print the full source->target replacement map and exit.")
     args = parser.parse_args()
 
-    lines = load_level(args.input)
-    out_rows = convert_level(lines)
+    set_target(args.tileset)
 
+    if args.show_map:
+        source = _load_tiles(SOURCE_TILESET)
+        kept = set(_load_tiles(args.tileset).keys())
+        print(f"# Replacement map for {os.path.basename(args.tileset)} "
+              f"({len(kept)} tiles)")
+        for glyph, tags in source.items():
+            dst = _active_map[glyph]
+            name = tags[-1]
+            if glyph in kept:
+                print(f"  {glyph!r:6} {name:22} KEPT")
+            else:
+                dst_name = _load_tiles(args.tileset)[dst][-1] if dst in kept else "air"
+                print(f"  {glyph!r:6} {name:22} -> {dst!r} ({dst_name})")
+        return
+
+    if not args.input:
+        parser.error("input level is required unless --show_map is given")
+
+    out_rows = convert_level(load_level(args.input))
     output_text = "\n".join(out_rows) + "\n"
-
     if args.output:
         Path(args.output).write_text(output_text, encoding="utf-8")
         print(f"Saved to: {args.output}")
