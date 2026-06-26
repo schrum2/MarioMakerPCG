@@ -1,0 +1,111 @@
+{
+    "tiles": {
+        " ": [
+            "passable",
+            "empty",
+            "air"
+        ],
+        "#": [
+            "solid",
+            "ground"
+        ],
+        "k": [
+            "passable",
+            "platform",
+            "semisolid"
+        ],
+        "H": [
+            "solid",
+            "hard block"
+        ],
+        "c": [
+            "passable",
+            "collectable",
+            "coin"
+        ],
+        "B": [
+            "solid",
+            "breakable",
+            "brick"
+        ],
+        "|": [
+            "solid",
+            "pipe",
+            "warp"
+        ],
+        "^": [
+            "solid",
+            "damaging",
+            "hazard",
+            "spikes"
+        ],
+        "T": [
+            "solid",
+            "platform",
+            "mushroom platform"
+        ],
+        "G": [
+            "passable",
+            "goal",
+            "flagpole"
+        ],
+        ".": [
+            "passable",
+            "togglable",
+            "dotted line block"
+        ],
+        "g": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "goomba"
+        ],
+        "?": [
+            "solid",
+            "question block"
+        ],
+        "t": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "thwomp"
+        ],
+        "j": [
+            "passable",
+            "interactive",
+            "swinging claw"
+        ],
+        "Z": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "projectile",
+            "banzai bill"
+        ],
+        "=": [
+            "solid",
+            "platform",
+            "bridge"
+        ],
+        "I": [
+            "solid",
+            "slippery",
+            "ice block"
+        ],
+        "[": [
+            "passable",
+            "interactive",
+            "climbable",
+            "vine"
+        ],
+        "-": [
+            "passable",
+            "platform",
+            "moving",
+            "lift"
+        ]
+    }
+}

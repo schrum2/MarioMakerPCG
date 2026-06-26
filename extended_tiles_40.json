@@ -1,0 +1,232 @@
+{
+    "tiles": {
+        " ": [
+            "passable",
+            "empty",
+            "air"
+        ],
+        "#": [
+            "solid",
+            "ground"
+        ],
+        "k": [
+            "passable",
+            "platform",
+            "semisolid"
+        ],
+        "H": [
+            "solid",
+            "hard block"
+        ],
+        "c": [
+            "passable",
+            "collectable",
+            "coin"
+        ],
+        "B": [
+            "solid",
+            "breakable",
+            "brick"
+        ],
+        "|": [
+            "solid",
+            "pipe",
+            "warp"
+        ],
+        "^": [
+            "solid",
+            "damaging",
+            "hazard",
+            "spikes"
+        ],
+        "T": [
+            "solid",
+            "platform",
+            "mushroom platform"
+        ],
+        "G": [
+            "passable",
+            "goal",
+            "flagpole"
+        ],
+        ".": [
+            "passable",
+            "togglable",
+            "dotted line block"
+        ],
+        "g": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "goomba"
+        ],
+        "?": [
+            "solid",
+            "question block"
+        ],
+        "t": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "thwomp"
+        ],
+        "j": [
+            "passable",
+            "interactive",
+            "swinging claw"
+        ],
+        "Z": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "projectile",
+            "banzai bill"
+        ],
+        "=": [
+            "solid",
+            "platform",
+            "bridge"
+        ],
+        "I": [
+            "solid",
+            "slippery",
+            "ice block"
+        ],
+        "[": [
+            "passable",
+            "interactive",
+            "climbable",
+            "vine"
+        ],
+        "-": [
+            "passable",
+            "platform",
+            "moving",
+            "lift"
+        ],
+        "K": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "koopa"
+        ],
+        "<": [
+            "solid",
+            "platform",
+            "cloud block"
+        ],
+        "%": [
+            "damaging",
+            "hazard",
+            "moving",
+            "saw"
+        ],
+        "P": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "piranha plant"
+        ],
+        "0": [
+            "solid",
+            "damaging",
+            "hazard",
+            "moving",
+            "skewer"
+        ],
+        "h": [
+            "passable",
+            "hidden block"
+        ],
+        "d": [
+            "passable",
+            "falling",
+            "donut block"
+        ],
+        "V": [
+            "solid",
+            "enemy",
+            "damaging",
+            "hazard",
+            "shooter",
+            "bullet bill blaster"
+        ],
+        "D": [
+            "passable",
+            "door",
+            "warp"
+        ],
+        "]": [
+            "passable",
+            "platform",
+            "one way"
+        ],
+        "s": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "spiny"
+        ],
+        "N": [
+            "solid",
+            "note block"
+        ],
+        "~": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "cheep cheep"
+        ],
+        "X": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "boss",
+            "bowser"
+        ],
+        "&": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "lava bubble"
+        ],
+        "!": [
+            "enemy",
+            "damaging",
+            "hazard",
+            "moving",
+            "boss",
+            "boom boom"
+        ],
+        "M": [
+            "passable",
+            "collectable",
+            "power-up",
+            "mushroom"
+        ],
+        "U": [
+            "passable",
+            "collectable",
+            "power-up",
+            "one up"
+        ],
+        "i": [
+            "passable",
+            "collectable",
+            "power-up",
+            "fire flower"
+        ],
+        "f": [
+            "passable",
+            "checkpoint flag"
+        ]
+    }
+}

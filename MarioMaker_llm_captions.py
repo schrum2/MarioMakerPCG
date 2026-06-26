@@ -910,22 +910,70 @@ def build_avoidance_clause(bad_chars):
     )
 
 
-def build_count_clause(num_captions, mismatched):
+def build_count_clause(num_captions, retries):
     """Clause re-stressing the exact caption count, added once a scene has miscounted.
 
-    Returns "" until then, like build_avoidance_clause for non-ASCII chars.
+    Escalates with the retry number: a firm reminder for the first couple of misses,
+    then a blunter demand plus an explicit N-slot skeleton once the model keeps
+    miscounting, since a lazy model usually needs a harder shove than a polite
+    restatement. Returns "" until the scene has miscounted at least once, like
+    build_avoidance_clause for non-ASCII chars.
     """
-    if not mismatched:
+    if not retries:
         return ""
     plural = "caption" if num_captions == 1 else "captions"
     string_plural = "string" if num_captions == 1 else "strings"
-    return (
+    base = (
         f"\n\nCRITICAL: An earlier attempt for this level returned the WRONG number of captions. You "
         f"MUST output EXACTLY {num_captions} {plural} -- no more and no fewer -- as a single JSON array "
         f"of {num_captions} {string_plural}. Returning a different number (for example only one when "
         f"more are asked for) is a failure: count your captions before answering and make sure there "
         f"are exactly {num_captions}."
     )
+    if retries < 3:
+        return base
+    # Harder shove after repeated miscounts: spell out the exact array shape with one
+    # slot per caption so the model only has to fill blanks, and forbid any stray text.
+    slots = ", ".join(f'"<caption {i + 1}>"' for i in range(num_captions))
+    return base + (
+        f"\n\nThis has now failed {retries} times. STOP and follow this exactly. Output ONLY a JSON "
+        f"array with EXACTLY {num_captions} elements, in this shape, replacing each placeholder with a "
+        f"real caption while keeping the brackets and commas:\n[{slots}]\n"
+        f"There must be exactly {num_captions} comma-separated {string_plural} between the brackets and "
+        f"absolutely nothing before '[' or after ']'."
+    )
+
+
+# Conservative chars-per-token ratios, measured against Ollama's prompt_eval_count
+# on this machine (gemma3). Each is the LOW end of the observed range for that prompt
+# shape, so dividing by it overestimates the token count and the fitted context
+# window errs toward leaving enough room. The space-separated 'T<NN>' token grid is
+# far denser (~1.5-2.0 chars/token) than the character ASCII grid + prose (~4-5).
+_CHARS_PER_TOKEN = {"tokens": 1.5, "ascii": 3.5}
+
+
+def estimate_prompt_tokens(text, grid_format="ascii"):
+    """Conservative (deliberately high) token estimate for an Ollama prompt."""
+    return int(len(text) / _CHARS_PER_TOKEN.get(grid_format, 3.5)) + 1
+
+
+def fit_num_ctx(prompt, floor_ctx, max_ctx, gen_tokens, grid_format="ascii"):
+    """Pick an Ollama num_ctx that holds the prompt AND leaves room to generate.
+
+    Grows floor_ctx (the user's --num-ctx) up to max_ctx when a big prompt -- e.g.
+    the space-separated token grid on a wide level -- would otherwise fill the whole
+    window and starve generation. That starvation is what makes Ollama return an
+    empty or truncated response (done_reason 'length', ~0 output tokens), which the
+    caller then reprompts against forever since every retry sends the same oversized
+    prompt. Returns (effective_ctx, fits); fits is False when even max_ctx cannot
+    seat the prompt with meaningful room to answer.
+    """
+    prompt_tokens = estimate_prompt_tokens(prompt, grid_format)
+    needed = prompt_tokens + gen_tokens + 512  # 512 ~ headroom for reprompt clauses
+    effective = min(max(floor_ctx, needed), max_ctx)
+    # Require at least a little generation room beyond the prompt itself.
+    fits = prompt_tokens + 256 <= max_ctx
+    return effective, fits
 
 _UNICODE_NORMALIZE = {
     '\u2018': "'", '\u2019': "'",   # left/right single quotes
@@ -1057,7 +1105,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                        grid_format="ascii", tileset_we_path=None, ascii_output_dir=None,
                        backend="ollama", api_key=None, max_tokens=900, max_reprompts=3,
                        num_captions=5, prompt_log_file="MM2_Prompt.txt", with_images=False,
-                       num_ctx=8192, temperature=0.4):
+                       num_ctx=8192, max_num_ctx=16384, temperature=0.4):
     image_clause = build_image_clause() if with_images else ""
     prompt_template = build_prompt_template(num_captions, image_clause)
 
@@ -1175,7 +1223,28 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                 image_tag = " [no img]"
                 images_missing += 1
 
-        print(f"[{i + 1}/{total}] {name}{image_tag} ...", end=" ", flush=True)
+        # Size the Ollama context window to this scene so a big prompt (notably the
+        # space-separated token grid on a wide level) can't fill the whole window and
+        # leave nothing to generate -- the overflow that otherwise produces empty/
+        # truncated output and an endless reprompt loop. Other backends manage their
+        # own context, so this only applies to the local Ollama path.
+        effective_num_ctx = num_ctx
+        if backend in ("ollama", "moondream", "llava"):
+            effective_num_ctx, fits = fit_num_ctx(
+                prompt, num_ctx, max_num_ctx, max_tokens, grid_format)
+            if not fits:
+                print(
+                    f"[{i + 1}/{total}] {name}{image_tag} ... SKIP: prompt needs "
+                    f"~{estimate_prompt_tokens(prompt, grid_format)} tokens, more than "
+                    f"--max-num-ctx ({max_num_ctx}) can hold with room to generate. Use "
+                    f"--grid-format ascii (far fewer tokens than the token grid) or raise "
+                    f"--max-num-ctx."
+                )
+                errors += 1
+                continue
+
+        ctx_tag = f" [ctx {effective_num_ctx}]" if effective_num_ctx != num_ctx else ""
+        print(f"[{i + 1}/{total}] {name}{image_tag}{ctx_tag} ...", end=" ", flush=True)
         captions = []
         last_raw = ""
         start_time = time.time()
@@ -1210,7 +1279,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                     # ollama, moondream and llava all go through the local Ollama
                     # server; moondream/llava just pin a particular vision model.
                     raw = call_ollama(active_prompt, model, url, timeout, retries,
-                                      max_tokens=max_tokens, num_ctx=num_ctx,
+                                      max_tokens=max_tokens, num_ctx=effective_num_ctx,
                                       temperature=temperature,
                                       image_b64=image_b64, media_type=media_type)
                 captions = parse_captions(raw)
@@ -1426,9 +1495,22 @@ def main():
         type=int,
         default=8192,
         help=(
-            "Ollama context window (tokens). Must hold the whole prompt plus room "
-            "to generate, but too large blows the KV cache past VRAM on big models "
-            "and Ollama then returns empty responses. Default: 8192"
+            "Baseline Ollama context window (tokens). Acts as a floor: each scene's "
+            "window is grown from here up to --max-num-ctx when its prompt needs more "
+            "room (e.g. the wide token grid), so generation is never starved. Too large "
+            "a floor blows the KV cache past VRAM on big models. Default: 8192"
+        ),
+    )
+    parser.add_argument(
+        "--max-num-ctx",
+        type=int,
+        default=16384,
+        help=(
+            "Ceiling for the per-scene Ollama context window. The window is sized to "
+            "fit each prompt plus generation room, capped here. A scene whose prompt "
+            "can't fit even at this cap is skipped with a message (use --grid-format "
+            "ascii, which is far smaller, or raise this). Raise carefully: big models "
+            "(12B+) can blow VRAM at high values. Default: 16384"
         ),
     )
     parser.add_argument(
@@ -1549,6 +1631,15 @@ def main():
         print("Error: --num-captions must be at least 1")
         sys.exit(1)
 
+    # The ceiling can't sit below the floor; if it does, lift it to the floor so the
+    # per-scene window can at least equal the requested baseline.
+    if args.max_num_ctx < args.num_ctx:
+        print(
+            f"Note: --max-num-ctx ({args.max_num_ctx}) is below --num-ctx ({args.num_ctx}); "
+            f"raising it to {args.num_ctx}."
+        )
+        args.max_num_ctx = args.num_ctx
+
     default_models = {
         "claude": "claude-sonnet-4-6",
         "openai": "gpt-4o",
@@ -1594,6 +1685,7 @@ def main():
         prompt_log_file=None if args.no_prompt_log else args.prompt_log,
         with_images=args.with_images,
         num_ctx=args.num_ctx,
+        max_num_ctx=args.max_num_ctx,
         temperature=args.temperature,
     )
 
