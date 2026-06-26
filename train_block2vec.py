@@ -9,6 +9,7 @@ from util.plotter import Plotter  # Import the Plotter class
 from patch_dataset import PatchDataset
 from models.block2vec_model import Block2Vec
 import util.common_settings as common_settings
+from embedding_analysis import UpdateCounter, analyze_embeddings
 
 # ====== Defaults, but overridden by params ======
 EMBEDDING_DIM = 16
@@ -96,6 +97,11 @@ def main():
 
     # Model, optimizer
     model = Block2Vec(vocab_size=vocab_size, embedding_dim=args.embedding_dim, negative_samples=args.negative_samples)
+    # --- snapshot embeddings before training, for "distance moved" diagnostics ---
+    init_in_embed = model.in_embed.weight.detach().clone()
+    # --- tracks how many times each tile id is actually used as a training center ---
+    update_counter = UpdateCounter(vocab_size)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = None
     if args.lr_patience > 0:
@@ -156,6 +162,7 @@ def main():
 
             # Accumulate per-class stats
             batch_centers = center.unsqueeze(1).expand(-1, context.shape[1]).reshape(-1)
+            update_counter.update(batch_centers)          
             for i, c in enumerate(batch_centers.tolist()):
                 per_class_loss_sum[c] += per_example_loss[i].item()
                 per_class_count[c] += 1
@@ -203,6 +210,17 @@ def main():
     # ====== Save Embeddings ======
     model.save_pretrained(args.output_dir)
     print(f"Embeddings saved to {args.output_dir}")
+
+    # --- write analysis report + figures ---
+    dataset_center_counts = getattr(dataset, "center_counts", None)
+    analyze_embeddings(
+        model=model,
+        output_dir=args.output_dir,
+        update_counter=update_counter,
+        dataset_center_counts=dataset_center_counts,
+        init_in_embed=init_in_embed,
+        top_k_neighbors=5,
+    )
 
     # Stop the plotting thread
     plotter.stop_plotting()
