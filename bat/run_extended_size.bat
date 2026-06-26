@@ -35,8 +35,8 @@ set SEED=0
 set BATCH_SIZE=16
 set EMBEDDING_DIM=16
 set WINDOW_SIZE=3
-set B2V_EPOCHS=100
-set DIFF_EPOCHS=100
+set B2V_EPOCHS=200
+set DIFF_EPOCHS=500
 
 REM -- Throwaway output (one folder per size so runs don't collide) -----------
 set OUTDIR=run_extended_%SIZE%
