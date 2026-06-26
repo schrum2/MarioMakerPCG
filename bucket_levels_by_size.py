@@ -41,8 +41,21 @@ that isn't a clean multiple can't be reconstructed by the matching upsampling
 and the model fails to build. 4 covers the default three-level UNet (two halving
 steps); deepen the net and you'll want 8, 16, ...
 
+By default a level is bucketed whole, so any level wider than the largest bucket
+is dropped. Pass --sliding_window to instead chop each level into consecutive,
+NON-overlapping windows and bucket every window on its own: the whole level is
+covered exactly once -- no overlap, no repeats -- so a level wider than the
+largest bucket contributes several differently-sized windows (e.g. 500 wide ->
+w240 + w240 + w48) instead of being dropped. The chop width defaults to the
+widest bucket, so the leading windows fill the biggest bucket and only the
+remainder spills into a smaller one.
+
 Usage (default scheme -- the tuned MM2 buckets in DEFAULT_BUCKETS below):
     python bucket_levels_by_size.py --input <file-or-folder> --output_dir datasets/buckets
+
+Usage (sliding window -- cover wide levels with non-overlapping bucket-sized windows):
+    python bucket_levels_by_size.py --input <file-or-folder> --output_dir datasets/buckets \\
+        --sliding_window
 
 Usage (single bucket):
     python bucket_levels_by_size.py --input <file-or-folder> --output_dir datasets/buckets \\
@@ -195,6 +208,24 @@ def bucket_for(width, height, buckets):
     return None
 
 
+def partition_windows(box, window_w):
+    """Chop a content box (list of equal-width strings) into consecutive,
+    NON-overlapping windows at most window_w wide, so the whole level is covered
+    exactly once -- every column is used, with no overlap and no repeats.
+
+    The leading windows are window_w wide (sized for the widest bucket) and the
+    final window is whatever remains, which then falls into a smaller bucket. A
+    level no wider than window_w is returned unchanged as a single window. Each
+    window is later re-trimmed to its own content box, so a window that lands on
+    a sparse stretch shrinks into a smaller bucket rather than wasting padding.
+    """
+    width = len(box[0]) if box else 0
+    if width <= window_w:
+        return [box]
+
+    return [[row[x:x + window_w] for row in box] for x in range(0, width, window_w)]
+
+
 def encode_and_pad(box, target_w, target_h, tile_to_id, extra_id, empty_id):
     """Encode a content box (list of equal-width strings) to a target_h x target_w
     grid of tile ids, bottom-left aligned and air-padded on the top and right."""
@@ -241,6 +272,18 @@ def main():
     parser.add_argument("--min_h", type=int, default=1, help="Single-bucket minimum height (inclusive).")
     parser.add_argument("--max_h", type=int, default=None, help="Single-bucket maximum height (inclusive).")
 
+    parser.add_argument("--sliding_window", action="store_true",
+                        help="Instead of bucketing each level as one scene, chop it into consecutive, "
+                             "NON-overlapping windows and bucket each on its own (re-trimmed back to its "
+                             "content box first). The whole level is covered exactly once -- no overlap, "
+                             "no repeats -- so a level wider than the largest bucket contributes several "
+                             "differently-sized windows (e.g. 500 wide -> w240 + w240 + w48) instead of "
+                             "being dropped.")
+    parser.add_argument("--window_w", type=int, default=None,
+                        help="Window width in tiles for --sliding_window: the chop size for the leading "
+                             "windows (the remainder falls into a smaller bucket). Default: the largest "
+                             "bucket's max width, so the leading windows fill the biggest bucket.")
+
     parser.add_argument("--size_multiple", type=int, default=4,
                         help="Round each bucket's target width/height up to this multiple so the "
                              "UNet's downsampling divides evenly. Default: 4.")
@@ -257,6 +300,16 @@ def main():
     except ValueError as e:
         sys.exit(f"ERROR: {e}")
 
+    # Resolve the chop width: default to the widest bucket, so the leading
+    # (full) windows fill the biggest bucket and only the remainder spills into a
+    # smaller one. The partition is non-overlapping, so there is no stride.
+    window_w = args.window_w
+    if args.sliding_window:
+        if window_w is None:
+            window_w = max(b["max_w"] for b in buckets)
+        if window_w < 1:
+            sys.exit("ERROR: --window_w must be >= 1.")
+
     tile_to_id, extra_tile = load_tileset(args.tileset)
     extra_id = tile_to_id[extra_tile]
     empty_char = args.empty_chars[0]
@@ -272,6 +325,10 @@ def main():
         label = b["name"] or f"{b['target_w']}x{b['target_h']}"
         print(f"  [{label}] width {b['min_w']}-{b['max_w']}, height {b['min_h']}-{b['max_h']} "
               f"-> padded to {b['target_w']}x{b['target_h']}")
+    if args.sliding_window:
+        print(f"Sliding window: levels are chopped into non-overlapping {window_w}-wide windows "
+              f"(remainder into a smaller bucket); the whole level is covered once, no repeats. "
+              f"Each window is re-trimmed and bucketed on its own.")
 
     # Optionally collapse each raw mm2view level into the simplified extended
     # tile alphabet before it's measured and encoded, so the buckets land in the
@@ -306,29 +363,47 @@ def main():
                 empty_levels += 1
                 continue
 
-            width, height = len(box[0]), len(box)
-            b = bucket_for(width, height, buckets)
-            if b is None:
-                unmatched += 1
-                continue
-
-            # Fold the pipe-direction arrows onto "|" before encoding (a 1:1 glyph
-            # swap, so it doesn't disturb the measured size or bucket choice).
-            box = [row.translate(PIPE_ARROW_TO_GLYPH) for row in box]
-
-            # Keep an eye on how much of the level falls outside the tileset; a high
-            # ratio usually means the wrong --tileset was passed for this input.
-            chars, unmapped, unmapped_set = check_unmapped_chars(box, tile_to_id, extra_tile)
-            total_chars += chars
-            total_unmapped += unmapped
             full_name = f"{input_file.stem}/{name}" if multi else name
-            if chars and unmapped / chars > UNMAPPED_WARN_RATIO:
-                print(f"  [WARNING] {full_name}: {unmapped}/{chars} chars "
-                      f"({unmapped / chars:.0%}) not in the tileset and collapsed to {extra_tile!r}. "
-                      f"Unmapped: {' '.join(repr(c) for c in sorted(unmapped_set))}")
 
-            scene = encode_and_pad(box, b["target_w"], b["target_h"], tile_to_id, extra_id, empty_id)
-            b["entries"].append({"name": full_name, "scene": scene})
+            # A whole level is one "window" by default; with --sliding_window a wide
+            # level is chopped into consecutive, non-overlapping windows that cover it
+            # exactly once. Each window is re-trimmed to its own content box (the chop
+            # can leave fresh air at the top/sides) and then measured, bucketed, padded
+            # and named exactly like a standalone level.
+            if args.sliding_window:
+                raw_windows = partition_windows(box, window_w)
+            else:
+                raw_windows = [box]
+            multi_win = len(raw_windows) > 1
+
+            for w_idx, raw in enumerate(raw_windows):
+                sub = level_content_box(raw, empty_chars=args.empty_chars) if multi_win else raw
+                if not sub:
+                    continue  # window landed on an all-air gap; nothing to bucket
+
+                width, height = len(sub[0]), len(sub)
+                b = bucket_for(width, height, buckets)
+                if b is None:
+                    unmatched += 1
+                    continue
+
+                # Fold the pipe-direction arrows onto "|" before encoding (a 1:1 glyph
+                # swap, so it doesn't disturb the measured size or bucket choice).
+                sub = [row.translate(PIPE_ARROW_TO_GLYPH) for row in sub]
+
+                # Keep an eye on how much falls outside the tileset; a high ratio
+                # usually means the wrong --tileset was passed for this input.
+                chars, unmapped, unmapped_set = check_unmapped_chars(sub, tile_to_id, extra_tile)
+                total_chars += chars
+                total_unmapped += unmapped
+                win_name = f"{full_name}_w{w_idx}" if multi_win else full_name
+                if chars and unmapped / chars > UNMAPPED_WARN_RATIO:
+                    print(f"  [WARNING] {win_name}: {unmapped}/{chars} chars "
+                          f"({unmapped / chars:.0%}) not in the tileset and collapsed to {extra_tile!r}. "
+                          f"Unmapped: {' '.join(repr(c) for c in sorted(unmapped_set))}")
+
+                scene = encode_and_pad(sub, b["target_w"], b["target_h"], tile_to_id, extra_id, empty_id)
+                b["entries"].append({"name": win_name, "scene": scene})
 
     os.makedirs(args.output_dir, exist_ok=True)
     written = []
@@ -345,9 +420,12 @@ def main():
         written.append(out_path)
         print(f"  [{suffix}] {len(entries)} level(s) -> {out_path}")
 
-    matched = total - unmatched - empty_levels
-    print(f"\nScanned {total} level(s): {matched} bucketed, {unmatched} outside every bucket, "
-          f"{empty_levels} empty.")
+    # With sliding windows one level yields many entries, so "bucketed"/"outside"
+    # count windows; without it they're per-level and match the old behaviour.
+    matched = sum(len(b["entries"]) for b in buckets)
+    unit = "window(s)" if args.sliding_window else "level(s)"
+    print(f"\nScanned {total} level(s): {matched} {unit} bucketed, {unmatched} {unit} outside every "
+          f"bucket, {empty_levels} empty.")
     if total_chars:
         print(f"Unmapped characters: {total_unmapped}/{total_chars} "
               f"({total_unmapped / total_chars:.1%}) across the bucketed levels.")
