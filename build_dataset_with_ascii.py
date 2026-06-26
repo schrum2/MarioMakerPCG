@@ -394,6 +394,10 @@ def main():
         converter_mod = load_converter("ascii_to_vglc.py", "ascii_to_vglc")
     elif args.convert_to_extended:
         converter_mod = load_converter("mm2view_to_extended.py", "mm2view_to_extended")
+        # Reduce onto the same tileset we encode against, so the converter's surviving
+        # glyphs are exactly this tileset's ids (e.g. extended_tiles_30.json), not the
+        # converter's default extended_tiles.json.
+        converter_mod.set_target(tileset_path)
 
     # --with_images setup: locate the rendered PNGs and a place to write crops.
     Image = None

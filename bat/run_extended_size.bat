@@ -34,20 +34,21 @@ set PY=C:\Users\mckeonp\AppData\Local\miniconda3\envs\SURF\python.exe
 set SEED=0
 set BATCH_SIZE=16
 set EMBEDDING_DIM=16
+REM STRIDE: step (in tiles) between 20x20 sliding windows; 20 = no overlap.
+set STRIDE=20
+REM WINDOW_SIZE: the small odd tile-context window Block2Vec slices (not the scene).
 set WINDOW_SIZE=3
 set B2V_EPOCHS=200
 set DIFF_EPOCHS=500
 
-REM -- Throwaway output (one folder per size so runs don't collide) -----------
-set OUTDIR=run_extended_%SIZE%
-set RAW=%OUTDIR%\MM_Levels_extended.json
+REM -- Output paths: dataset JSONs go in datasets\ (like every other bat); the
+REM    trained model dirs sit at the repo root. All keyed on SIZE so runs don't collide.
+if not exist "datasets" mkdir "datasets"
+set RAW=datasets\MM_Levels_extended%SIZE%.json
 set BASE=%RAW:.json=%
-set TILES_JSON=%OUTDIR%\MM_tiles_%WINDOW_SIZE%x%WINDOW_SIZE%.json
-set B2V_OUTPUT=%OUTDIR%\block2vec
-set DIFF_OUTPUT=%OUTDIR%\diff
-
-if exist "%OUTDIR%" rd /s /q "%OUTDIR%"
-mkdir "%OUTDIR%"
+set TILES_JSON=datasets\MM_%WINDOW_SIZE%x%WINDOW_SIZE%_tiles-extended%SIZE%.json
+set B2V_OUTPUT=MM-block2vec-extended%SIZE%-d%EMBEDDING_DIM%-w%WINDOW_SIZE%
+set DIFF_OUTPUT=MM-uncond-extended%SIZE%-b2v%EMBEDDING_DIM%-w%WINDOW_SIZE%-%SEED%
 
 REM Auto-answer "y" to train_diffusion.py's resume-from-checkpoint prompt.
 set YES_FILE=%TEMP%\run_extended_%SIZE%_yes.txt
@@ -57,8 +58,8 @@ echo.
 echo === SIZE=%SIZE% (%TILESET%, NUM_TILES=%NUM_TILES%)  INPUT=%INPUT% ===
 
 echo.
-echo === [1/4] bucket-sort + reduce to the %TILESET% id space ===
-%PY% bucket_levels_by_size.py --input "%INPUT%" --output_dir "%OUTDIR%\size_buckets" --tileset %TILESET% --convert_to_extended --merged_output "%RAW%"
+echo === [1/4] sliding-window dataset (20x20, stride %STRIDE%) reduced to the %TILESET% id space ===
+%PY% build_dataset_with_ascii.py --input_file "%INPUT%" --output "%RAW%" --tileset %TILESET% --convert_to_extended --sliding_window --stride %STRIDE%
 if errorlevel 1 goto error
 
 echo.
