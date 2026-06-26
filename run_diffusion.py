@@ -28,6 +28,13 @@ def parse_args():
         choices=["ascii", "image", "both"],
         help="Output format: ascii text files, tile images, or both",
     )
+    parser.add_argument(
+        "--game",
+        type=str,
+        default="MM",
+        choices=["Mario", "MM"],
+        help="Which game to create a model for (affects sample style and tile count)"
+    )    
     parser.add_argument("--tileset", default="smb.json", help="Path to tileset JSON")
     parser.add_argument("--describe_absence", action="store_true", default=False, help="Caption mentions when tiles are entirely absent")
     return parser.parse_args()
@@ -120,7 +127,7 @@ def generate_levels(args):
             print(f"  Saved {len(ascii_levels)} ASCII levels to {args.output_dir}")
 
         if args.output_format in ("image", "both"):
-            visualize_samples(samples, args.output_dir, True, start_index)
+            visualize_samples(samples, args.output_dir, True, start_index, game=args.game)
             print(f"  Saved {current_batch_size} level images to {args.output_dir}")
 
     all_samples = torch.cat(all_samples, dim=0)[:total_samples]
