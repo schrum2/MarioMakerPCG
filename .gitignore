@@ -247,3 +247,4 @@ MM2_Prompt.txt
 *.csv
 *.safetensors
 *.jsonl
+*.pkl
