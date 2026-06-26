@@ -427,7 +427,8 @@ def main():
                                         negative_prompt_training=args.negative_prompt_training,
                                         block_embeddings=block_embeddings, batch_size=args.batch_size,
                                         persistent_workers=(not args.auto_augment),
-                                        multiple_captions=args.multiple_captions)
+                                        multiple_captions=args.multiple_captions,
+                                        require_captions=args.text_conditional)
 
     # Persist the BucketBatchSampler's scene-width range alongside the model so post-training
     # tools (evaluate_caption_adherence.py, run_diffusion.py) can randomize generated widths
