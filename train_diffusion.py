@@ -80,7 +80,7 @@ def parse_args():
     parser.add_argument("--pkl", type=str, default=None, help="Path to tokenizer pkl file")
     parser.add_argument("--json", type=str, default="datasets/SMB1_LevelsAndCaptions-regular-train.json", help="Path to dataset json file")
     parser.add_argument("--val_json", type=str, default=None, help="Optional path to validation dataset json file")
-    parser.add_argument("--num_tiles", type=int, default=13, help="Number of tile types")
+    parser.add_argument("--num_tiles", type=int, default=None, help="Number of tile types. If omitted, defaults to the per-game value below.")
     parser.add_argument("--batch_size", type=int, default=32, help="Training batch size") # TODO: Consider reducing to 16 to help generalization
     parser.add_argument("--augment", action="store_true", help="Enable data augmentation")
     parser.add_argument("--multiple_captions", action="store_true", help="Each sample stores several captions ('caption', 'caption1', ...); select one at random per access instead of phrase-shuffle augmentation. This becomes the only augmentation (phrase shuffling and scene flipping are disabled).")
@@ -131,7 +131,7 @@ def parse_args():
     parser.add_argument("--config", type=str, default=None, help="Path to JSON config file with training parameters.")
 
     # For caption score calculation
-    parser.add_argument("--tileset", default=common_settings.MARIO_TILESET, help="Descriptions of individual tile types")
+    parser.add_argument("--tileset", default=None, help="Descriptions of individual tile types. If omitted, defaults to the per-game value below.")
     parser.add_argument("--describe_absence", action="store_true", default=False, help="Indicate when there are no occurrences of an item or structure")
     parser.add_argument("--plot_validation_caption_score", action="store_true", default=False, help="Whether validation caption score should be plotted")
 
@@ -303,9 +303,13 @@ def main():
         args.num_tiles = common_settings.MM_FULL_TILE_COUNT
         args.tileset = '../TheVGLC/MegaMan/MM.json'
     elif args.game == "MM":
-        # These are typically overridden and may be invalid
-        args.num_tiles = common_settings.MM_EXTENDED_TILE_COUNT
-        args.tileset = common_settings.MM_EXTENDED_TILESET
+        # Default to the canonical 69-tile mm2 tileset, but honor an explicit
+        # --num_tiles / --tileset so the smaller extended_tiles.json vocabulary
+        # (18 ids) can reuse the MM game type without forcing 69 channels.
+        if args.num_tiles is None:
+            args.num_tiles = common_settings.MM_EXTENDED_TILE_COUNT
+        if args.tileset is None:
+            args.tileset = common_settings.MM_EXTENDED_TILESET
     else:
         raise ValueError(f"Unknown game: {args.game}")
 

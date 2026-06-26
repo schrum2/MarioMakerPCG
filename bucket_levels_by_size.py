@@ -76,6 +76,7 @@ from build_dataset_with_ascii import (  # noqa: E402
     load_tileset,
     detect_empty_char,
     check_unmapped_chars,
+    load_converter,
 )
 from analyze_level_dimensions import level_content_box  # noqa: E402
 import util.common_settings as common_settings  # noqa: E402
@@ -224,6 +225,11 @@ def main():
                              f"Default: {common_settings.MM2_TILESET}.")
     parser.add_argument("--prefix", default="MM_Levels",
                         help="Filename prefix for the per-bucket JSONs. Default: MM_Levels.")
+    parser.add_argument("--convert_to_extended", action="store_true",
+                        help="Run each level through mm2view_to_extended.py before measuring/bucketing, "
+                             "so the buckets land in the simplified extended_tiles.json id space (pass "
+                             "--tileset extended_tiles.json with this). The converter fixes every level "
+                             "to 20 rows tall and leaves the width free, so the width buckets still apply.")
 
     parser.add_argument("--buckets", default=None,
                         help="Path to a JSON list of bucket boxes "
@@ -267,6 +273,14 @@ def main():
         print(f"  [{label}] width {b['min_w']}-{b['max_w']}, height {b['min_h']}-{b['max_h']} "
               f"-> padded to {b['target_w']}x{b['target_h']}")
 
+    # Optionally collapse each raw mm2view level into the simplified extended
+    # tile alphabet before it's measured and encoded, so the buckets land in the
+    # extended_tiles.json id space rather than the full mm2 one.
+    converter = None
+    if args.convert_to_extended:
+        converter = load_converter("mm2view_to_extended.py", "mm2view_to_extended")
+        print("Converting levels to the extended tile format (mm2view_to_extended.py) before bucketing.")
+
     input_files = collect_input_files(args.input)
     multi = len(input_files) > 1
 
@@ -281,6 +295,8 @@ def main():
     for input_file in input_files:
         for name, rows in parse_source_file(input_file).items():
             total += 1
+            if converter is not None:
+                rows = converter.convert_level(rows)
             box = level_content_box(rows, empty_chars=args.empty_chars)
             if not box:
                 empty_levels += 1

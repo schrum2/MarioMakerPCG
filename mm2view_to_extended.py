@@ -7,36 +7,25 @@ Like mm2view_to_vglc.py but with ~20 granular tile types instead of collapsing
 everything to generic "enemy" / "ground". VGLC characters are reused where they
 apply so the two formats stay comparable.
 
-Output characters
------------------
-    -   air / empty
-    X   ground (all solid terrain)
-    S   brick (breakable brick)
+Output characters -- must match the tile chars in extended_tiles.json exactly:
+    (space) air / empty
+    #   ground (all solid terrain, stone, slopes, warp structures)
+    B   brick (breakable brick)
     ?   question block
-    o   coin
-    E   goomba / generic enemy
+    c   coin
+    g   goomba / generic enemy
     K   koopa
     P   piranha plant (piranha flower, piranha creeper, muncher)
+    t   thwomp
     ^   spike block / spikes
-    N   breakable non-brick block (hidden block, donut block)
-    M   mushroom platform
-    B   cannon top
-    b   cannon bottom
+    N   note / breakable non-brick block (hidden block, donut block)
+    T   mushroom platform
     =   bridge (passable bridge platform)
-    _   semisolid platform
-    W   stone block
-    F   fire flower
-    T   thwomp
-
-    Upright pipe (↑ / |):
-    <   pipe top-left        >   pipe top-right
-    [   pipe body-left       ]   pipe body-right
-
-    Upside-down pipe (↓, ceiling-mounted):
-    (   pipe cap-left        )   pipe cap-right
-    {   pipe body-left       }   pipe body-right
-
-    Sideways pipes (← / →) are treated as solid ground (X).
+    k   semisolid platform
+    i   fire flower
+    V   cannon / shooter (top and bottom)
+    |   pipe -- upright (↑ / |) and ceiling (↓); cap and body collapse to one
+        glyph. Sideways pipes (← / →) are treated as solid ground (#).
 
 Usage:
     python mm2view_to_extended.py input_level.txt [output_level.txt]
@@ -102,27 +91,30 @@ MM2_ENEMIES_GENERIC = set(
 )
 
 # ---------------------------------------------------------------------------
-# Output characters — must match the chars in extended_tiles.json exactly
+# Output characters — must match the chars in extended_tiles.json exactly.
+# extended_tiles.json has no dedicated stone/cannon-bottom glyph, so stone folds
+# into ground "#" and the cannon bottom shares the shooter glyph "V"; both pipe
+# orientations collapse to the single pipe glyph "|".
 OUT_EMPTY    = " "
 OUT_GROUND   = "#"
 OUT_BRICK    = "B"
 OUT_QUESTION = "?"
-OUT_COIN     = "¢"
+OUT_COIN     = "c"
 OUT_ENEMY    = "g"
 OUT_KOOPA    = "K"
 OUT_PIRANHA  = "P"
 OUT_SPIKE    = "^"
-OUT_MUSHROOM = "³"
+OUT_MUSHROOM = "T"
 OUT_BREAK_NB = "N"
 OUT_CANNON_T = "V"
 OUT_CANNON_B = "V"
-OUT_BRIDGE   = "·"
-OUT_SEMISOLID= "´"
-OUT_STONE    = "S"
+OUT_BRIDGE   = "="
+OUT_SEMISOLID= "k"
+OUT_STONE    = "#"
 OUT_FIRE_FL  = "i"
 OUT_THWOMP   = "t"
-PIPE_UPRIGHT = "↑"   # upright pipe (cap and body collapse to one char)
-PIPE_DOWN    = "↓"   # ceiling pipe (cap and body)
+PIPE_UPRIGHT = "|"   # upright pipe (cap and body collapse to one char)
+PIPE_DOWN    = "|"   # ceiling pipe (cap and body)
 
 # ---------------------------------------------------------------------------
 
