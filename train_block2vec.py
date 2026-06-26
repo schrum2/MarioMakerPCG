@@ -39,6 +39,13 @@ def main():
     parser.add_argument('--lr', type=float, default=LR, help='Learning rate')
     parser.add_argument('--negative_samples', type=int, default=NEGATIVE_SAMPLES, help='Number of negative context tiles per positive pair')
     parser.add_argument('--vocab_size', type=int, default=None, help='Number of tile types. Defaults to the largest tile id in the data + 1. Set this to the tileset size so every tile id gets an embedding row.')
+    parser.add_argument('--no_subsampling', action='store_true',
+                        help='Disable Mikolov-style frequent-tile subsampling (enabled by default). Use this to reproduce old behavior.')
+    parser.add_argument('--subsample_threshold', type=float, default=0.01,
+                        help='Subsampling threshold (lower = more aggressive downsampling of frequent center tiles). '
+                             'Word2vec NLP defaults (1e-3 to 1e-5) assume much lower max-frequency than tile data typically has '
+                             '(e.g. a dominant background tile can be 40-60%% of centers) -- if background/filler tiles still '
+                             'dominate after enabling subsampling, try raising this (e.g. 0.05-0.2) rather than lowering it.')
     parser.add_argument('--use_class_weights', action='store_true', help='Use inverse-frequency class weights to upweight rare center tiles')
     parser.add_argument('--focal_gamma', type=float, default=0.0, help='Focal loss gamma. 0 = disabled')
     parser.add_argument('--label_smoothing', type=float, default=0.0, help='Label smoothing (not used for BCE negative sampling, kept for future)')
@@ -72,9 +79,14 @@ def main():
         os.makedirs(args.output_dir)
 
     # Load dataset
-    dataset = PatchDataset(json_path=args.json_file, output_dir=args.output_dir)
+# Load dataset
+    dataset = PatchDataset(
+        json_path=args.json_file,
+        output_dir=args.output_dir,
+        subsampling=not args.no_subsampling,
+        subsample_threshold=args.subsample_threshold,
+    )
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
-
     # Compute vocab size from the actual dataset to handle any tile set (Mario, MM, etc.)
     try:
         detected_vocab = max(max(patch) for sample in dataset.patches for patch in sample) + 1
