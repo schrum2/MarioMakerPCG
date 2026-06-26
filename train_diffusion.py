@@ -162,7 +162,7 @@ def parse_args():
     parser.add_argument(
         "--game",
         type=str,
-        default="Mario",
+        default="MM",
         choices=["Mario", "MM"],
         help="Which game to create a model for (affects sample style and tile count)"
     )
