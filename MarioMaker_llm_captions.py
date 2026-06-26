@@ -20,6 +20,10 @@ import time
 import urllib.request
 import urllib.error
 
+# Reprompt budget for wrong caption counts. Kept large and separate from --max-reprompts
+# (empty/non-English responses) since a lazy model usually complies on a later try.
+MAX_CAPTION_RETRIES = 100
+
 # ── Tile character → human-readable name ─────────────────────────────────────
 
 EXTENDED_CHAR_NAMES = {
@@ -905,6 +909,24 @@ def build_avoidance_clause(bad_chars):
         f"ASCII characters."
     )
 
+
+def build_count_clause(num_captions, mismatched):
+    """Clause re-stressing the exact caption count, added once a scene has miscounted.
+
+    Returns "" until then, like build_avoidance_clause for non-ASCII chars.
+    """
+    if not mismatched:
+        return ""
+    plural = "caption" if num_captions == 1 else "captions"
+    string_plural = "string" if num_captions == 1 else "strings"
+    return (
+        f"\n\nCRITICAL: An earlier attempt for this level returned the WRONG number of captions. You "
+        f"MUST output EXACTLY {num_captions} {plural} -- no more and no fewer -- as a single JSON array "
+        f"of {num_captions} {string_plural}. Returning a different number (for example only one when "
+        f"more are asked for) is a failure: count your captions before answering and make sure there "
+        f"are exactly {num_captions}."
+    )
+
 _UNICODE_NORMALIZE = {
     '\u2018': "'", '\u2019': "'",   # left/right single quotes
     '\u201c': '"', '\u201d': '"',   # left/right double quotes
@@ -1157,11 +1179,19 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         captions = []
         last_raw = ""
         start_time = time.time()
+        # attempt = empty/non-English reprompts (max_reprompts);
+        # caption_retries = wrong-count reprompts (MAX_CAPTION_RETRIES).
+        attempt = 0
+        caption_retries = 0
         try:
-            for attempt in range(max_reprompts):
-                # Every attempt -- including the first attempt of a brand-new scene --
-                # carries the running ban list of every bad char seen so far this run.
-                active_prompt = prompt + build_avoidance_clause(all_bad_chars)
+            while attempt < max_reprompts and caption_retries < MAX_CAPTION_RETRIES:
+                # Carry the running bad-char ban list, plus a count reminder once this
+                # scene has miscounted.
+                active_prompt = (
+                    prompt
+                    + build_avoidance_clause(all_bad_chars)
+                    + build_count_clause(num_captions, caption_retries)
+                )
                 last_full_prompt = active_prompt
 
                 if backend == "claude":
@@ -1190,28 +1220,46 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                 # instead of breaking out and dropping the level -- gemma
                 # occasionally returns "" for a scene that succeeds on a retry.
                 if not captions:
+                    attempt += 1
                     reprompted_scenes[name] = reprompted_scenes.get(name, 0) + 1
                     total_reprompts += 1
                     print(
-                        f"\n  [REPROMPT {attempt + 1}/{max_reprompts - 1}] "
+                        f"\n  [REPROMPT {attempt}/{max_reprompts - 1}] "
                         f"empty response, retrying...",
                         end=" ", flush=True,
                     )
                     continue
 
                 bad_chars = find_non_ascii_chars(captions)
-                if not bad_chars:
-                    break
-                all_bad_chars.update(bad_chars)
-                reprompted_scenes[name] = reprompted_scenes.get(name, 0) + 1
-                total_reprompts += 1
-                current_list = ", ".join(f"{ch!r} (U+{ord(ch):04X})" for ch in bad_chars)
-                print(
-                    f"\n  [REPROMPT {attempt + 1}/{max_reprompts - 1}] "
-                    f"non-English character(s) {current_list} in caption, retrying...",
-                    end=" ", flush=True,
-                )
-                captions = []
+                if bad_chars:
+                    all_bad_chars.update(bad_chars)
+                    attempt += 1
+                    reprompted_scenes[name] = reprompted_scenes.get(name, 0) + 1
+                    total_reprompts += 1
+                    current_list = ", ".join(f"{ch!r} (U+{ord(ch):04X})" for ch in bad_chars)
+                    print(
+                        f"\n  [REPROMPT {attempt}/{max_reprompts - 1}] "
+                        f"non-English character(s) {current_list} in caption, retrying...",
+                        end=" ", flush=True,
+                    )
+                    captions = []
+                    continue
+
+                # Gemma especially under-produces here; reprompt until the count matches.
+                if len(captions) != num_captions:
+                    caption_retries += 1
+                    reprompted_scenes[name] = reprompted_scenes.get(name, 0) + 1
+                    total_reprompts += 1
+                    print(
+                        f"\n  [CAPTION RETRY {caption_retries}/{MAX_CAPTION_RETRIES}] "
+                        f"returned {len(captions)} caption(s), expected {num_captions}; "
+                        f"retrying...",
+                        end=" ", flush=True,
+                    )
+                    captions = []
+                    continue
+
+                break
         except RuntimeError as e:
             print(f"ERROR: {e}")
             captions = []
@@ -1347,7 +1395,7 @@ def main():
     parser.add_argument(
         "--num-captions",
         type=int,
-        default=1,
+        default=5,
         help=(
             "How many captions to generate per level. The prompt adapts: with 1 it asks "
             "for a single natural caption, with 2+ it asks for that many that vary widely "
