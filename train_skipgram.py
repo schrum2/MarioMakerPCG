@@ -143,7 +143,7 @@ def main():
             factor=args.lr_factor,
             patience=args.lr_patience,
             min_lr=args.min_lr,
-            verbose=True,
+            # verbose=True, # deprecated
         )
     best_loss = float('inf')
     epochs_since_improvement = 0
@@ -152,7 +152,7 @@ def main():
     with open(log_file, 'w') as f:
         pass
 
-    plotter = Plotter(log_file=log_file, update_interval=5.0, left_key='loss', left_label='Loss', output_png='training_progress.png')
+    plotter = Plotter(log_file=log_file, update_interval=5.0, left_key='loss', left_label='Loss', output_png='training_progress.png', right_key=None, right_label=None)
     plot_thread = threading.Thread(target=plotter.start_plotting)
     plot_thread.daemon = True
     plotter.running = True
