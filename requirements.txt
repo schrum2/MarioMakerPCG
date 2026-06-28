@@ -26,3 +26,5 @@ Pillow==11.0.0
 tqdm
 torchview==0.2.6
 graphviz
+
+scikit-learn==1.7.2
