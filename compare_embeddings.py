@@ -68,38 +68,113 @@ except ImportError:
 # Run discovery + identity parsing
 # ==========================================================================
 
+import re
+
+# Legacy naming: B2V08_03, Skip16_10, etc.
+_LEGACY_RE = re.compile(r"^(B2V|Skip)(\d+)_(\d+)$")
+
+# Descriptive naming: B2V_dim16_thresh03_neg20_cw_focal2 or B2V_dim16_nosub_cw
+# (order of optional suffix tags doesn't matter).
+_DESCRIPTIVE_RE = re.compile(r"^(B2V|Skip)_dim(\d+)_(.*)$")
+
+
 def parse_run_name(dirname):
-    """Parse 'B2V08_03' -> {'method': 'block2vec', 'embedding_dim': 8,
-    'subsample_threshold': 0.03}. Parse 'Skip16_10' similarly.
-    Returns None if the name doesn't match the expected pattern -- caller
-    should skip such directories with a warning rather than crash.
+    """Parse a run directory name into a dict of the hyperparameters used to
+    produce it. Supports two naming schemes:
+
+      Legacy:      B2V08_03   -> method=block2vec, embedding_dim=8,
+                                  subsample_threshold=0.03
+      Descriptive: B2V_dim16_thresh03_neg20_cw_focal2
+                              -> method=block2vec, embedding_dim=16,
+                                 subsample_threshold=0.03, negative_samples=20,
+                                 use_class_weights=True, focal_gamma=2.0
+      Descriptive (no subsampling): B2V_dim16_nosub_cw
+                              -> no_subsampling=True, subsample_threshold=None
+
+    Returns None if the name doesn't match either pattern -- caller should
+    skip such directories with a warning rather than crash.
     """
     base = os.path.basename(dirname.rstrip(os.sep))
-    if base.startswith("B2V"):
-        method = "block2vec"
-        rest = base[3:]
-    elif base.startswith("Skip"):
-        method = "skipgram"
-        rest = base[4:]
-    else:
-        return None
 
-    if "_" not in rest:
-        return None
-    dim_str, thresh_str = rest.split("_", 1)
-    try:
-        embedding_dim = int(dim_str)
-        # YY means threshold 0.YY, e.g. "03" -> 0.03, "10" -> 0.10
-        subsample_threshold = int(thresh_str) / 100.0
-    except ValueError:
-        return None
+    m = _LEGACY_RE.match(base)
+    if m:
+        method_tag, dim_str, thresh_str = m.groups()
+        method = "block2vec" if method_tag == "B2V" else "skipgram"
+        try:
+            embedding_dim = int(dim_str)
+            subsample_threshold = int(thresh_str) / 100.0
+        except ValueError:
+            return None
+        return {
+            "method": method,
+            "embedding_dim": embedding_dim,
+            "subsample_threshold": subsample_threshold,
+            "no_subsampling": False,
+            "negative_samples": None,  # unknown for legacy runs (was always the default, 10)
+            "use_class_weights": False,
+            "focal_gamma": None,
+            "run_name": base,
+            "naming_scheme": "legacy",
+        }
 
-    return {
-        "method": method,
-        "embedding_dim": embedding_dim,
-        "subsample_threshold": subsample_threshold,
-        "run_name": base,
-    }
+    m = _DESCRIPTIVE_RE.match(base)
+    if m:
+        method_tag, dim_str, rest = m.groups()
+        method = "block2vec" if method_tag == "B2V" else "skipgram"
+        try:
+            embedding_dim = int(dim_str)
+        except ValueError:
+            return None
+
+        tokens = rest.split("_") if rest else []
+        no_subsampling = False
+        subsample_threshold = None
+        negative_samples = None
+        use_class_weights = False
+        focal_gamma = None
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok == "nosub":
+                no_subsampling = True
+            elif tok.startswith("thresh"):
+                digits = tok[len("thresh"):]
+                try:
+                    subsample_threshold = int(digits) / 100.0
+                except ValueError:
+                    pass
+            elif tok.startswith("neg"):
+                digits = tok[len("neg"):]
+                try:
+                    negative_samples = int(digits)
+                except ValueError:
+                    pass
+            elif tok == "cw":
+                use_class_weights = True
+            elif tok.startswith("focal"):
+                digits = tok[len("focal"):]
+                try:
+                    focal_gamma = float(digits)
+                except ValueError:
+                    pass
+            i += 1
+
+        if no_subsampling:
+            subsample_threshold = None  # threshold is meaningless when subsampling is off
+
+        return {
+            "method": method,
+            "embedding_dim": embedding_dim,
+            "subsample_threshold": subsample_threshold,
+            "no_subsampling": no_subsampling,
+            "negative_samples": negative_samples,
+            "use_class_weights": use_class_weights,
+            "focal_gamma": focal_gamma,
+            "run_name": base,
+            "naming_scheme": "descriptive",
+        }
+
+    return None
 
 
 def discover_runs(root, patterns):
@@ -110,7 +185,8 @@ def discover_runs(root, patterns):
                 continue
             identity = parse_run_name(path)
             if identity is None:
-                print(f"[skip] '{path}' does not match expected naming (B2V##_## / Skip##_##)")
+                print(f"[skip] '{path}' does not match expected naming "
+                      f"(B2V##_## / Skip##_## or B2V_dim##_... / Skip_dim##_...)")
                 continue
             found.append((path, identity))
     return found
@@ -393,6 +469,24 @@ def json_derived_metrics(report):
             "zero_update_tile_ids": zero_update_tiles,
         })
 
+        # max_min_update_ratio above is dominated by any tile that's
+        # structurally absent from the dataset (dataset_center_count == 0,
+        # e.g. tile 32 in this project) -- that tile's update count is zero
+        # in every run regardless of training quality, so it's not a useful
+        # signal for comparing *training procedure* across runs. This
+        # variant excludes tiles with zero dataset occurrences, so the
+        # ratio reflects imbalance among tiles that actually had a chance
+        # to be learned.
+        dataset_counts_arr = np.array(
+            [row.get("dataset_center_count", np.nan) for row in per_tile], dtype=float
+        )
+        present_mask = (dataset_counts_arr > 0) & ~np.isnan(update_counts)
+        present_updates = update_counts[present_mask]
+        if len(present_updates) > 0 and np.nanmin(present_updates) >= 0:
+            metrics["max_min_update_ratio_present_only"] = float(
+                np.nanmax(present_updates) / max(np.nanmin(present_updates), 1)
+            )
+
     has_movement = not np.all(np.isnan(movement))
     if has_movement:
         metrics.update({
@@ -465,8 +559,9 @@ def compute_score_inputs(run_record):
     vocab_size = jm.get("vocab_size") or 1
     if "undertrained_tile_count" in jm:
         out["undertrained_frac"] = jm["undertrained_tile_count"] / vocab_size
-    if "max_min_update_ratio" in jm:
-        out["max_min_update_ratio_log"] = np.log10(max(jm["max_min_update_ratio"], 1.0))
+    ratio_key = "max_min_update_ratio_present_only" if "max_min_update_ratio_present_only" in jm else "max_min_update_ratio"
+    if ratio_key in jm:
+        out["max_min_update_ratio_log"] = np.log10(max(jm[ratio_key], 1.0))
     if "top1_sim_mean" in jm:
         out["top1_sim_mean"] = jm["top1_sim_mean"]
 
@@ -531,6 +626,213 @@ def rank_runs(run_records):
 
 
 # ==========================================================================
+# Cross-run analysis
+#
+# Single-run metrics (above) tell you about one run in isolation. These
+# functions look *across* the whole batch of runs to answer questions a
+# single run's report can't: which tile pairs are consistently confusable
+# regardless of training procedure (a property of the *data*, not any one
+# run's luck), and which hyperparameter axes (dim, threshold, negative
+# samples, ...) are actually driving score differences once you control for
+# the others.
+# ==========================================================================
+
+def find_recurring_near_duplicates(run_records, min_run_count=3):
+    """Tile pairs that show up as near-duplicates (per find_near_duplicate_pairs)
+    in many *different* runs, regardless of method/dim/threshold, are unlikely
+    to be a training fluke -- they're a property of how those two tiles behave
+    in the source data (e.g. visually/contextually near-interchangeable).
+    Returns a list of (tile_a, tile_b, run_count, run_names, mean_sim) sorted
+    by run_count descending, for pairs appearing in at least min_run_count runs.
+    """
+    pair_to_runs = {}
+    for rec in run_records:
+        examples = rec.get("near_dup_examples")
+        if not examples:
+            continue
+        for a, b, sim in examples:
+            key = (min(a, b), max(a, b))
+            pair_to_runs.setdefault(key, []).append((rec["identity"]["run_name"], sim))
+
+    recurring = []
+    for (a, b), occurrences in pair_to_runs.items():
+        if len(occurrences) >= min_run_count:
+            run_names = [name for name, _ in occurrences]
+            mean_sim = float(np.mean([sim for _, sim in occurrences]))
+            recurring.append((a, b, len(occurrences), run_names, mean_sim))
+    recurring.sort(key=lambda x: (-x[2], -x[4]))
+    return recurring
+
+
+def analyze_hyperparameter_axis(run_records, axis_key, axis_label):
+    """Group runs by a single hyperparameter (e.g. embedding_dim,
+    subsample_threshold) and report mean composite score per value, holding
+    nothing else constant -- this is a marginal view, not a controlled
+    experiment, so it's most informative when combined with the matched-group
+    trend analysis below.
+    Returns list of (value, mean_score, run_count, run_names) sorted by value.
+    """
+    groups = {}
+    for rec in run_records:
+        val = rec["identity"].get(axis_key)
+        if val is None:
+            continue
+        groups.setdefault(val, []).append(rec)
+
+    out = []
+    for val, recs in groups.items():
+        scores = [r["composite_score"] for r in recs if not np.isnan(r["composite_score"])]
+        mean_score = float(np.mean(scores)) if scores else float("nan")
+        out.append((val, mean_score, len(recs), [r["identity"]["run_name"] for r in recs]))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def analyze_threshold_trend(run_records):
+    """For each (method, embedding_dim) pair that has 2+ runs at different
+    subsample_threshold values (and no other hyperparameter varying -- i.e.
+    default negative_samples, no class weights/focal loss), check whether
+    composite score is monotonic in subsample_threshold. This isolates the
+    threshold's effect from everything else that's also being swept now,
+    which the simple marginal axis view above can't do once more axes exist.
+
+    Returns list of dicts: {method, embedding_dim, points: [(threshold, score, run_name)],
+    monotonic_decreasing: bool, still_improving_at_min: bool}
+    """
+    groups = {}
+    for rec in run_records:
+        ident = rec["identity"]
+        if ident.get("no_subsampling"):
+            continue
+        if ident.get("negative_samples") is not None:
+            continue  # isolate threshold effect; skip runs that also vary negative_samples
+        if ident.get("use_class_weights") or ident.get("focal_gamma"):
+            continue  # block2vec-only extra axes; skip for a clean threshold comparison
+        if ident.get("subsample_threshold") is None:
+            continue
+        key = (ident["method"], ident["embedding_dim"])
+        groups.setdefault(key, []).append(rec)
+
+    results = []
+    for (method, dim), recs in groups.items():
+        if len(recs) < 2:
+            continue
+        recs_sorted = sorted(recs, key=lambda r: r["identity"]["subsample_threshold"])
+        points = [
+            (r["identity"]["subsample_threshold"], r["composite_score"], r["identity"]["run_name"])
+            for r in recs_sorted
+        ]
+        scores = [p[1] for p in points]
+        # monotonic_decreasing: score strictly decreases as threshold increases
+        # (i.e. lower threshold = better), matching what sweep 1 showed.
+        monotonic_decreasing = all(scores[i] >= scores[i + 1] for i in range(len(scores) - 1))
+        min_threshold = points[0][0]
+        still_improving_at_min = (
+            len(points) >= 2 and points[0][1] > points[1][1] and monotonic_decreasing
+        )
+        results.append({
+            "method": method,
+            "embedding_dim": dim,
+            "points": points,
+            "monotonic_decreasing": monotonic_decreasing,
+            "still_improving_at_min": still_improving_at_min,
+            "min_threshold_tested": min_threshold,
+        })
+    results.sort(key=lambda r: (r["method"], r["embedding_dim"]))
+    return results
+
+
+def analyze_no_subsampling_effect(run_records):
+    """Directly compare each (method, embedding_dim) group's no_subsampling
+    run against its best subsampled run at the same method+dim, to answer
+    'is subsampling actually helping, or would turning it off be as good or
+    better?' Returns list of dicts with both sides of the comparison."""
+    by_method_dim = {}
+    for rec in run_records:
+        ident = rec["identity"]
+        key = (ident["method"], ident["embedding_dim"])
+        by_method_dim.setdefault(key, []).append(rec)
+
+    out = []
+    for (method, dim), recs in by_method_dim.items():
+        nosub_recs = [r for r in recs if r["identity"].get("no_subsampling")]
+        sub_recs = [
+            r for r in recs
+            if not r["identity"].get("no_subsampling")
+            and r["identity"].get("subsample_threshold") is not None
+            and r["identity"].get("negative_samples") is None
+            and not r["identity"].get("use_class_weights")
+            and not r["identity"].get("focal_gamma")
+        ]
+        if not nosub_recs or not sub_recs:
+            continue
+        best_sub = max(sub_recs, key=lambda r: r["composite_score"])
+        for nosub_rec in nosub_recs:
+            out.append({
+                "method": method,
+                "embedding_dim": dim,
+                "nosub_run": nosub_rec["identity"]["run_name"],
+                "nosub_score": nosub_rec["composite_score"],
+                "best_sub_run": best_sub["identity"]["run_name"],
+                "best_sub_threshold": best_sub["identity"]["subsample_threshold"],
+                "best_sub_score": best_sub["composite_score"],
+                "nosub_wins": nosub_rec["composite_score"] > best_sub["composite_score"],
+            })
+    return out
+
+
+def cross_run_neighbor_agreement(run_records):
+    """For each tile, look at its top-1 neighbor (from per_tile_report.json)
+    across every run and check how often the *same* neighbor tile shows up.
+    High agreement across independently-trained runs is a stronger validity
+    signal than any single run's internal consistency: if tile 12's nearest
+    neighbor is tile 38 in 14 of 16 runs (different methods, dims, hyperparams),
+    that's much more likely to reflect a real pattern in the data than if it's
+    one run's idiosyncrasy.
+
+    Returns: (mean_agreement_fraction, per_tile_agreement) where
+    per_tile_agreement is a list of dicts {tile_id, most_common_neighbor,
+    agreement_fraction, n_runs_with_data} sorted by agreement_fraction
+    ascending (least agreed-upon tiles first -- these are the ones whose
+    "true" neighbor is most ambiguous/unstable across runs).
+    """
+    from collections import Counter
+
+    tile_to_neighbors = {}
+    for rec in run_records:
+        per_tile = rec.get("_raw_per_tile")
+        if not per_tile:
+            continue
+        for row in per_tile:
+            tid = row.get("tile_id")
+            n1 = row.get("top1_neighbor_id")
+            if tid is None or n1 is None:
+                continue
+            tile_to_neighbors.setdefault(tid, []).append(n1)
+
+    per_tile_agreement = []
+    for tid, neighbors in tile_to_neighbors.items():
+        if not neighbors:
+            continue
+        counts = Counter(neighbors)
+        most_common, count = counts.most_common(1)[0]
+        frac = count / len(neighbors)
+        per_tile_agreement.append({
+            "tile_id": tid,
+            "most_common_neighbor": most_common,
+            "agreement_fraction": frac,
+            "n_runs_with_data": len(neighbors),
+        })
+
+    per_tile_agreement.sort(key=lambda x: x["agreement_fraction"])
+    mean_agreement = (
+        float(np.mean([x["agreement_fraction"] for x in per_tile_agreement]))
+        if per_tile_agreement else float("nan")
+    )
+    return mean_agreement, per_tile_agreement
+
+
+# ==========================================================================
 # Report generation
 # ==========================================================================
 
@@ -546,10 +848,13 @@ def fmt(x, nd=4):
 
 def write_csv(run_records, out_path):
     fieldnames = [
-        "rank", "run_name", "method", "embedding_dim", "subsample_threshold",
+        "rank", "run_name", "method", "embedding_dim",
+        "subsample_threshold", "no_subsampling", "negative_samples",
+        "use_class_weights", "focal_gamma", "naming_scheme",
         "composite_score", "score_metric_count",
         "vocab_size",
-        "undertrained_tile_count", "zero_update_tile_count", "max_min_update_ratio",
+        "undertrained_tile_count", "zero_update_tile_count",
+        "max_min_update_ratio", "max_min_update_ratio_present_only",
         "movement_mean", "movement_min", "movement_max",
         "top1_sim_mean", "top1_sim_max", "top1_sim_gt_095_count",
         "raw_tensor_loaded", "raw_tensor_note",
@@ -563,18 +868,25 @@ def write_csv(run_records, out_path):
         for rec in run_records:
             jm = rec["json_metrics"]
             rm = rec.get("raw_metrics") or {}
+            ident = rec["identity"]
             row = {
                 "rank": rec["rank"],
-                "run_name": rec["identity"]["run_name"],
-                "method": rec["identity"]["method"],
-                "embedding_dim": rec["identity"]["embedding_dim"],
-                "subsample_threshold": rec["identity"]["subsample_threshold"],
+                "run_name": ident["run_name"],
+                "method": ident["method"],
+                "embedding_dim": ident["embedding_dim"],
+                "subsample_threshold": ident.get("subsample_threshold"),
+                "no_subsampling": ident.get("no_subsampling", False),
+                "negative_samples": ident.get("negative_samples"),
+                "use_class_weights": ident.get("use_class_weights", False),
+                "focal_gamma": ident.get("focal_gamma"),
+                "naming_scheme": ident.get("naming_scheme"),
                 "composite_score": rec["composite_score"],
                 "score_metric_count": rec["score_metric_count"],
                 "vocab_size": jm.get("vocab_size"),
                 "undertrained_tile_count": jm.get("undertrained_tile_count"),
                 "zero_update_tile_count": jm.get("zero_update_tile_count"),
                 "max_min_update_ratio": jm.get("max_min_update_ratio"),
+                "max_min_update_ratio_present_only": jm.get("max_min_update_ratio_present_only"),
                 "movement_mean": jm.get("movement_mean"),
                 "movement_min": jm.get("movement_min"),
                 "movement_max": jm.get("movement_max"),
@@ -595,6 +907,23 @@ def write_csv(run_records, out_path):
             writer.writerow(row)
 
 
+def _format_ident_short(ident):
+    """Short hyperparameter summary for table cells, e.g. 'thr=0.03' or
+    'nosub' or 'thr=0.03, neg=20'."""
+    parts = []
+    if ident.get("no_subsampling"):
+        parts.append("nosub")
+    elif ident.get("subsample_threshold") is not None:
+        parts.append(f"thr={ident['subsample_threshold']:.2f}")
+    if ident.get("negative_samples") is not None:
+        parts.append(f"neg={ident['negative_samples']}")
+    if ident.get("use_class_weights"):
+        parts.append("cw")
+    if ident.get("focal_gamma"):
+        parts.append(f"focal={ident['focal_gamma']:g}")
+    return ", ".join(parts) if parts else "default"
+
+
 def write_markdown_report(run_records, out_path, near_dup_threshold):
     n_runs = len(run_records)
     n_raw_loaded = sum(1 for r in run_records if r["raw_loaded"])
@@ -610,14 +939,18 @@ def write_markdown_report(run_records, out_path, near_dup_threshold):
                   "verdict -- it min-max-normalizes several metrics across the runs you ran and "
                   "combines them with fixed weights (see `SCORING_METRICS` in the script). It tells "
                   "you relative standing *within this batch*, not whether any of them are actually "
-                  "good enough in an absolute sense. Read the per-run detail and the 'Should you "
-                  "retrain?' section below before picking a winner.")
+                  "good enough in an absolute sense. The marginal/grouped views below are *not* "
+                  "controlled experiments -- when several hyperparameters vary at once across the "
+                  "batch, a 'best value of X' conclusion can be confounded by which other settings "
+                  "happened to be paired with it. The matched-group trend sections (threshold trend, "
+                  "no-subsampling comparison) control for this by only comparing runs that differ in "
+                  "exactly one axis; trust those over the marginal axis view when they disagree.")
     lines.append("")
 
     # ---------------- ranking table ----------------
     lines.append("## Ranking (best to worst, by composite score)")
     lines.append("")
-    lines.append("| Rank | Run | Method | Dim | Subsample thr. | Score | Undertrained tiles | Max/min update ratio | Mean top-1 sim | Mean pairwise cos | Eff. rank | Raw tensor? |")
+    lines.append("| Rank | Run | Method | Dim | Hyperparams | Score | Undertrained | Update ratio* | Mean top-1 sim | Mean pairwise cos | Eff. rank | Raw? |")
     lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for rec in run_records:
         jm = rec["json_metrics"]
@@ -628,20 +961,25 @@ def write_markdown_report(run_records, out_path, near_dup_threshold):
             if rm.get("effective_rank") is not None and jm.get("embedding_dim")
             else "n/a"
         )
+        ratio_val = jm.get("max_min_update_ratio_present_only", jm.get("max_min_update_ratio"))
         lines.append(
             f"| {rec['rank']} | `{ident['run_name']}` | {ident['method']} | {ident['embedding_dim']} "
-            f"| {ident['subsample_threshold']:.2f} | {fmt(rec['composite_score'], 3)} "
-            f"| {jm.get('undertrained_tile_count', 'n/a')} / {jm.get('vocab_size', '?')} "
-            f"| {fmt(jm.get('max_min_update_ratio'), 1)} "
+            f"| {_format_ident_short(ident)} | {fmt(rec['composite_score'], 3)} "
+            f"| {jm.get('undertrained_tile_count', 'n/a')}/{jm.get('vocab_size', '?')} "
+            f"| {fmt(ratio_val, 1)} "
             f"| {fmt(jm.get('top1_sim_mean'), 3)} "
             f"| {fmt(rm.get('mean_pairwise_cosine'), 3)} "
             f"| {eff_rank_str} "
             f"| {'yes' if rec['raw_loaded'] else 'no'} |"
         )
     lines.append("")
+    lines.append("*Update ratio excludes tiles with zero occurrences in the dataset itself "
+                  "(see 'structurally absent tiles' below) so it reflects training imbalance among "
+                  "tiles that actually had a chance to be learned, not just whether a dead tile exists.")
+    lines.append("")
 
-    # ---------------- grouped views ----------------
-    lines.append("## Grouped views")
+    # ---------------- grouped views (marginal, not controlled) ----------------
+    lines.append("## Grouped views (marginal -- see caveat above)")
     lines.append("")
     for method in ["block2vec", "skipgram"]:
         subset = [r for r in run_records if r["identity"]["method"] == method]
@@ -653,13 +991,121 @@ def write_markdown_report(run_records, out_path, near_dup_threshold):
                       f"(rank {best['rank']} overall, score {fmt(best['composite_score'], 3)})")
     lines.append("")
 
-    for dim in sorted(set(r["identity"]["embedding_dim"] for r in run_records)):
-        subset = [r for r in run_records if r["identity"]["embedding_dim"] == dim]
-        subset_sorted = sorted(subset, key=lambda r: r["rank"])
-        best = subset_sorted[0]
-        lines.append(f"**Best dim={dim} run:** `{best['identity']['run_name']}` "
-                      f"(rank {best['rank']} overall, score {fmt(best['composite_score'], 3)})")
+    dim_axis = analyze_hyperparameter_axis(run_records, "embedding_dim", "embedding_dim")
+    lines.append("**Mean composite score by embedding_dim** (marginal across all other settings):")
     lines.append("")
+    lines.append("| embedding_dim | mean score | # runs |")
+    lines.append("|---|---|---|")
+    for val, mean_score, count, _ in dim_axis:
+        lines.append(f"| {val} | {fmt(mean_score, 3)} | {count} |")
+    lines.append("")
+
+    neg_axis = [r for r in analyze_hyperparameter_axis(run_records, "negative_samples", "negative_samples") if r[0] is not None]
+    if neg_axis:
+        lines.append("**Mean composite score by negative_samples** (marginal; only runs where this was set explicitly):")
+        lines.append("")
+        lines.append("| negative_samples | mean score | # runs |")
+        lines.append("|---|---|---|")
+        for val, mean_score, count, _ in neg_axis:
+            lines.append(f"| {val} | {fmt(mean_score, 3)} | {count} |")
+        lines.append("")
+
+    # ---------------- matched-group threshold trend (controlled) ----------------
+    lines.append("## Subsample-threshold trend (matched groups -- method+dim held fixed)")
+    lines.append("")
+    lines.append("Each row below holds method and embedding_dim fixed and varies only "
+                  "subsample_threshold (negative_samples, class weights, and focal loss are NOT "
+                  "varied in these specific runs), so the score difference within a row is "
+                  "attributable to threshold alone.")
+    lines.append("")
+    threshold_trends = analyze_threshold_trend(run_records)
+    if not threshold_trends:
+        lines.append("(Not enough matched runs to isolate the threshold effect -- need 2+ runs "
+                      "sharing method+dim that differ only in subsample_threshold.)")
+    else:
+        for t in threshold_trends:
+            points_str = ", ".join(f"thr={p[0]:.2f}->{fmt(p[1],3)} (`{p[2]}`)" for p in t["points"])
+            direction = ("lower threshold = better, monotonically" if t["monotonic_decreasing"]
+                        else "NOT monotonic -- relationship is more complex than a simple trend")
+            lines.append(f"- **{t['method']} dim={t['embedding_dim']}**: {points_str}")
+            lines.append(f"  - {direction}")
+            if t["still_improving_at_min"]:
+                lines.append(f"  - Score was still improving at the lowest threshold tested "
+                              f"({t['min_threshold_tested']:.2f}) -- the optimum may be below this; "
+                              f"consider testing an even lower threshold (or `--no_subsampling`, "
+                              f"compared separately below).")
+    lines.append("")
+
+    # ---------------- no-subsampling comparison (controlled) ----------------
+    lines.append("## Does subsampling help at all? (no_subsampling vs. best subsampled run, matched method+dim)")
+    lines.append("")
+    nosub_comparisons = analyze_no_subsampling_effect(run_records)
+    if not nosub_comparisons:
+        lines.append("(No `--no_subsampling` runs found in this batch yet.)")
+    else:
+        for c in nosub_comparisons:
+            verdict = ("no_subsampling WINS" if c["nosub_wins"] else "subsampling still wins")
+            lines.append(f"- **{c['method']} dim={c['embedding_dim']}**: "
+                          f"`{c['nosub_run']}` (no_subsampling) scored {fmt(c['nosub_score'],3)} vs. "
+                          f"`{c['best_sub_run']}` (thr={c['best_sub_threshold']:.2f}, best subsampled) "
+                          f"scored {fmt(c['best_sub_score'],3)} -- **{verdict}**")
+    lines.append("")
+
+    # ---------------- recurring near-duplicate pairs across runs ----------------
+    lines.append("## Tile pairs that are near-duplicates across MANY independent runs")
+    lines.append("")
+    lines.append("These pairs showed up as near-duplicates (cosine similarity >= "
+                  f"{near_dup_threshold}) in multiple runs that differ in method, dimensionality, "
+                  "and/or hyperparameters. A pair recurring across many *independently trained* runs "
+                  "is much more likely to reflect a real property of the source data (these tiles "
+                  "are genuinely hard to tell apart given the training context/patch size) than a "
+                  "fixable training artifact -- compare against pairs that only show up once or "
+                  "twice, which are more likely incidental to one run's training dynamics.")
+    lines.append("")
+    recurring = find_recurring_near_duplicates(run_records, min_run_count=3)
+    if not recurring:
+        lines.append("(No tile pair recurred as a near-duplicate across 3+ runs.)")
+    else:
+        lines.append("| Tile A | Tile B | # runs it appears in | mean cos_sim | example runs |")
+        lines.append("|---|---|---|---|---|")
+        for a, b, count, run_names, mean_sim in recurring[:20]:
+            example_runs = ", ".join(f"`{n}`" for n in run_names[:4])
+            if len(run_names) > 4:
+                example_runs += f", +{len(run_names)-4} more"
+            lines.append(f"| {a} | {b} | {count}/{n_runs} | {fmt(mean_sim,3)} | {example_runs} |")
+    lines.append("")
+
+    # ---------------- cross-run neighbor agreement ----------------
+    lines.append("## Cross-run nearest-neighbor agreement")
+    lines.append("")
+    lines.append("For each tile, this checks how often the *same* top-1 neighbor (per "
+                  "`per_tile_report.json`) is picked across all runs, regardless of method/dim/"
+                  "hyperparameters. High agreement means independently-trained embeddings are "
+                  "converging on the same notion of similarity for that tile -- a stronger validity "
+                  "signal than any single run looking self-consistent. Low agreement means that "
+                  "tile's 'nearest neighbor' is unstable/arbitrary across training runs, which is "
+                  "worth knowing before trusting any one run's neighbor list for that tile.")
+    lines.append("")
+    mean_agreement, per_tile_agreement = cross_run_neighbor_agreement(run_records)
+    lines.append(f"Mean agreement fraction across all {len(per_tile_agreement)} tiles: **{fmt(mean_agreement, 3)}** "
+                 f"(1.0 = every run picked the same top-1 neighbor for every tile; lower = more disagreement).")
+    lines.append("")
+    low_agreement = [x for x in per_tile_agreement if x["agreement_fraction"] < 0.5]
+    if low_agreement:
+        lines.append(f"**{len(low_agreement)} tiles have unstable nearest-neighbor assignment** "
+                      f"(agreement < 50% across runs) -- their single most common neighbor and how "
+                      f"often it was picked:")
+        lines.append("")
+        lines.append("| Tile | Most common neighbor | Agreement | # runs with data |")
+        lines.append("|---|---|---|---|")
+        for x in low_agreement[:20]:
+            lines.append(f"| {x['tile_id']} | {x['most_common_neighbor']} | "
+                          f"{fmt(x['agreement_fraction']*100, 1)}% | {x['n_runs_with_data']} |")
+        lines.append("")
+    else:
+        lines.append("No tiles fell below 50% agreement -- neighbor assignment is reasonably stable "
+                      "across this entire batch of runs.")
+        lines.append("")
 
     # ---------------- per-run detail ----------------
     lines.append("## Per-run detail")
@@ -670,16 +1116,27 @@ def write_markdown_report(run_records, out_path, near_dup_threshold):
         rm = rec.get("raw_metrics") or {}
         lines.append(f"### `{ident['run_name']}`  (rank {rec['rank']} / {n_runs}, score {fmt(rec['composite_score'], 3)})")
         lines.append("")
-        lines.append(f"- Method: {ident['method']}, embedding_dim={ident['embedding_dim']}, "
-                      f"subsample_threshold={ident['subsample_threshold']:.2f}")
+        hp_bits = [f"method={ident['method']}", f"embedding_dim={ident['embedding_dim']}"]
+        if ident.get("no_subsampling"):
+            hp_bits.append("no_subsampling=True")
+        elif ident.get("subsample_threshold") is not None:
+            hp_bits.append(f"subsample_threshold={ident['subsample_threshold']:.2f}")
+        if ident.get("negative_samples") is not None:
+            hp_bits.append(f"negative_samples={ident['negative_samples']}")
+        if ident.get("use_class_weights"):
+            hp_bits.append("use_class_weights=True")
+        if ident.get("focal_gamma"):
+            hp_bits.append(f"focal_gamma={ident['focal_gamma']:g}")
+        lines.append(f"- {', '.join(hp_bits)}")
         lines.append(f"- Vocab size: {jm.get('vocab_size', 'n/a')}")
         if "undertrained_tile_count" in jm:
             lines.append(f"- Undertrained tiles: {jm['undertrained_tile_count']} "
                           f"({jm.get('zero_update_tile_count', 0)} with zero updates) "
                           f"-- ids: {jm.get('undertrained_tile_ids', [])}")
+            ratio_val = jm.get("max_min_update_ratio_present_only", jm.get("max_min_update_ratio"))
             lines.append(f"- Update count range: min={fmt(jm.get('min_updates'), 0)}, "
                           f"max={fmt(jm.get('max_updates'), 0)}, "
-                          f"max/min ratio={fmt(jm.get('max_min_update_ratio'), 1)}x")
+                          f"max/min ratio (excl. dataset-absent tiles)={fmt(ratio_val, 1)}x")
         if "rare_in_data_tile_ids" in jm and jm["rare_in_data_tile_ids"]:
             lines.append(f"- Tiles with ZERO occurrences in the dataset itself "
                           f"(not just undertrained -- structurally absent): {jm['rare_in_data_tile_ids']}")
@@ -762,12 +1219,12 @@ def write_markdown_report(run_records, out_path, near_dup_threshold):
                       "subsample-threshold tuning fixes a tile that never appears. Consider whether "
                       "the diffusion model actually needs to represent these tiles at all, or whether "
                       "more source data containing them is available.")
-        lines.append("- **Near-duplicate tile pairs**: if specific tile id pairs show up as "
-                      "near-duplicates across *most* runs (check the per-run 'worst near-duplicate "
-                      "pairs' lists), that's a signal those tiles are contextually almost "
-                      "interchangeable in your training data, not a training bug -- decide whether "
-                      "that's actually true for your tileset or whether the context window/patch "
-                      "size needs to be larger to distinguish them.")
+        lines.append("- **Near-duplicate tile pairs**: check the 'recurring near-duplicate pairs' "
+                      "section above -- if a pair shows up across many independently-trained runs, "
+                      "that's a signal those tiles are contextually almost interchangeable in your "
+                      "training data, not a training bug. Decide whether that's actually true for "
+                      "your tileset or whether the context window/patch size needs to be larger to "
+                      "distinguish them.")
         lines.append("- **Collapsed effective rank**: try a smaller `--embedding_dim` (no benefit to "
                       "paying for unused dimensions) or check whether `--negative_samples` is too low "
                       "for the vocab size, which can make the model converge to a low-rank solution.")
@@ -788,6 +1245,11 @@ def write_markdown_report(run_records, out_path, near_dup_threshold):
                   "the same thing as embedding quality. A tile can be updated a lot and still end up "
                   "with a poor embedding, or updated rarely and still land somewhere reasonable if its "
                   "few occurrences were informative.")
+    lines.append("- The marginal 'grouped views' (mean score by embedding_dim / negative_samples) are "
+                  "NOT controlled comparisons once multiple hyperparameters vary across the batch -- "
+                  "a value that looks best on average could be confounded by which other settings it "
+                  "happened to be tested alongside. Prefer the matched-group threshold trend and "
+                  "no-subsampling sections, which hold other hyperparameters fixed.")
     if n_runs - n_raw_loaded > 0:
         lines.append(f"- {n_runs - n_raw_loaded} run(s) did not have a loadable raw tensor, so their "
                       f"effective rank / pairwise similarity / near-duplicate metrics are missing and "
@@ -882,6 +1344,7 @@ def main():
             "raw_note": raw_note,
             "raw_metrics": raw_metrics,
             "near_dup_examples": near_dup_examples,
+            "_raw_per_tile": report.get("per_tile", []),
         })
 
     if not run_records:
