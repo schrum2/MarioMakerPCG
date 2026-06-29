@@ -99,16 +99,10 @@ OBJ_META = {
     "Super Star":          ("*", "#FFFF00", CAT_ITEM),
     "Super Mushroom":      ("M", "#EE2222", CAT_ITEM),
     "Big Mushroom":        ("E", "#CC1111", CAT_ITEM),
-    "SMB2 Mushroom":       ("Q", "#884488", CAT_ITEM),
     # Style Power-up A (id 44) gamestyle variants — see resolve_obj_name()
     "Super Leaf":          ("E", "#CC1111", CAT_ITEM),
     "Cape Feather":        ("E", "#CC1111", CAT_ITEM),
     "Propeller Mushroom":  ("E", "#CC1111", CAT_ITEM),
-    # Style Power-up B (id 81) gamestyle variants — see resolve_obj_name()
-    "Link":                ("Q", "#884488", CAT_ITEM),
-    "Frog Suit":           ("Q", "#884488", CAT_ITEM),
-    "Power Balloon":       ("Q", "#884488", CAT_ITEM),
-    "Super Acorn":         ("Q", "#884488", CAT_ITEM),
     "Super Hammer":        ("¬", "#996622", CAT_ITEM),
     "Big Coin":            ("£", "#FFAA00", CAT_ITEM),
     "P Switch":            ("S", "#4488FF", CAT_ITEM),
@@ -233,22 +227,17 @@ CAT_COLORS = {
     CAT_OTHER:    "#AAAAAA",
 }
 
-# Style Power-ups: objects.id 44 ("Big Mushroom") and 81 ("SMB2 Mushroom")
-# are decoded with fixed SMB1 names, but the power-up actually granted (and
-# its sprite) depends on the level's gamestyle_raw. See
-# mm2_json_field_dictionary.txt §5 for the full mapping.
+# Style Power-up: objects.id 44 ("Big Mushroom") is decoded with a fixed SMB1
+# name, but the power-up actually granted (and its sprite) depends on the
+# level's gamestyle_raw. See mm2_json_field_dictionary.txt §5 for the mapping.
+# (The id-81 "SMB2 Mushroom" slot B is intentionally absent: SMM:WE has no
+# equivalent, so those levels are dropped at extraction.)
 STYLE_POWERUP_NAMES = {
     "Big Mushroom": {     # Slot A (id 44, since v1.0.0)
         12621: "Big Mushroom",       # SMB1   -> Mega Mario
         13133: "Super Leaf",         # SMB3   -> Raccoon Mario
         22349: "Cape Feather",        # SMW    -> Cape Mario
         21847: "Propeller Mushroom",  # NSMBU  -> Propeller Mario
-    },
-    "SMB2 Mushroom": {    # Slot B (id 81, since v3.0.0)
-        12621: "Link",                 # SMB1   -> Link Mario (Master Sword)
-        13133: "Frog Suit",           # SMB3   -> Frog Mario
-        22349: "Power Balloon",        # SMW    -> Balloon Mario
-        21847: "Super Acorn",          # NSMBU  -> Flying Squirrel Mario
     },
 }
 
@@ -267,7 +256,7 @@ STYLE_RIDE_NAMES = {
 
 def resolve_obj_name(obj_name: str, gamestyle_raw: int) -> str:
     """Map a decoded object name to its gamestyle-correct name for
-    Style Power-up slots (id 44 / 81) and the Style Ride slot (id 45);
+    the Style Power-up slot (id 44) and the Style Ride slot (id 45);
     passes through unchanged otherwise."""
     for table in (STYLE_POWERUP_NAMES, STYLE_RIDE_NAMES):
         variants = table.get(obj_name)
@@ -309,7 +298,6 @@ CID_ITEM_NAME = {
     44:  "Big Mushroom",      # Style Power-up A (gamestyle-resolved; glyph E)
     45:  "Goomba's Shoe",     # Style Ride (SMW/NSMBU -> Yoshi's Egg; glyph z)
     70:  "Big Coin",
-    81:  "SMB2 Mushroom",     # Style Power-up B (gamestyle-resolved; glyph Q)
     92:  "Red Coin",
     116: "Super Hammer",
     127: "Cannon Box",

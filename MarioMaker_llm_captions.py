@@ -141,12 +141,11 @@ MM2_CHAR_NAMES = {
     "i": "Fire Flower",
     "\xa4": "Super Star",
     "M": "Super Mushroom",
-    # Style Power-up slots A/B: gamestyle-dependent (Super Leaf/Cape Feather/
-    # Propeller Mushroom, Frog Suit/Power Balloon/Super Acorn); scenes carry
-    # no gamestyle, so the SMB1 names are used here as a baseline. See
-    # mm2_json_field_dictionary.txt §5.
+    # Style Power-up slot A: gamestyle-dependent (Super Leaf/Cape Feather/
+    # Propeller Mushroom); scenes carry no gamestyle, so the SMB1 name is used
+    # here as a baseline. See mm2_json_field_dictionary.txt §5. (The id-81 SMB2
+    # Mushroom slot is dropped at extraction, so it has no glyph here.)
     "\xb6": "Big Mushroom",
-    "\xa7": "SMB2 Mushroom",
     "\xac": "Super Hammer",
     "\xa6": "P Switch",
     "\xaf": "POW Block",

@@ -160,6 +160,7 @@ SKIP_ITEM_NAMES = [
     "track",
     "track_block",
     "snake_block",
+    "smb2_mushroom",  # v3.0.0 style power-up: no SMM:WE equivalent, levels often depend on it
 ]
 
 SKIP_OBJECT_IDS = {OBJ_ID[name] for name in SKIP_ITEM_NAMES}
