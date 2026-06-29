@@ -447,6 +447,52 @@ def coalesce(name, cells, out, ground=None):
                     out.append(make_object(name, col, row))
 
 
+# ---------------------------------------------------------------------------
+# End-of-level goal synthesis (ASCII -> JSON)
+#
+# build_dataset_with_ascii.py can strip the goal/flagpole glyph from training
+# data (--strip_goal), so the diffusion model learns to produce levels WITHOUT an
+# end. Such ASCII carries no 'G', goal_cells comes back empty, and the level would
+# have goal_x/goal_y = (0, 0) -- no reachable finish. _append_end_goal() repairs
+# that by tacking a clean finish onto the right edge: a flat GOAL_RUNWAY_TILES-wide
+# ground platform (flush with the level's floor so the player can run onto it) with
+# a GOAL_WIDTH_TILES-wide goal standing on the FIRST of those tiles, at a y that
+# sits on the platform with open air above it -- reachable, and wide enough for the
+# player to pass into.
+# ---------------------------------------------------------------------------
+GOAL_RUNWAY_TILES = 10      # width of the synthesized end platform, in tiles
+GOAL_WIDTH_TILES = 3        # the goal's own footprint, in tiles
+
+
+def _append_end_goal(ground, width):
+    """Add a reachable end-of-level goal to the right of a level that has none.
+
+    Appends a GOAL_RUNWAY_TILES-wide flat ground platform just past the current
+    right edge (rows 0..floor-1, flush with the level's base floor) to `ground`,
+    and returns (goal_col, goal_row, added_cols): the goal stands on the first
+    runway tile, GOAL_WIDTH_TILES wide, with its base one row above the floor
+    surface so there is open air above it."""
+    ground_at = {(g["x"], g["y"]) for g in ground}
+    # Floor height = the contiguous ground stack from the bottom at the right-most
+    # column that actually has a floor (ground on row 0). That is the level's
+    # walkable base near the end; the runway is laid flush with it so the player
+    # can run straight onto the platform. Default to the common SMM2 floor of 2.
+    floor = 0
+    for col in range(width - 1, -1, -1):
+        if (col, 0) in ground_at:
+            while (col, floor) in ground_at:
+                floor += 1
+            break
+    if floor == 0:
+        floor = 2
+    runway_left = width                     # append just past the current content
+    runway = max(GOAL_RUNWAY_TILES, GOAL_WIDTH_TILES)   # must hold the goal
+    for col in range(runway_left, runway_left + runway):
+        for row in range(floor):
+            ground.append({"x": col, "y": row, "id": 0, "bid": 0})
+    return runway_left, floor, runway
+
+
 def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
                    timer=300):
     rows, width = parse_ascii(text)
@@ -540,8 +586,11 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
         goal_col = min(c for c, _ in goal_cells)
         goal_row = min(r for _, r in goal_cells)
     else:
-        goal_col = 0
-        goal_row = 0
+        # No flagpole in the ASCII (e.g. --strip_goal training data): synthesize a
+        # reachable end goal on a fresh ground runway tacked onto the right edge,
+        # widening the level to include it. See _append_end_goal.
+        goal_col, goal_row, added = _append_end_goal(ground, width)
+        width += added
 
     # Recover the player spawn height. The player always starts at the left edge,
     # standing on top of the left-edge ground column (the start platform the
