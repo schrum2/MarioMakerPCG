@@ -249,6 +249,49 @@ ASCII_REPLACEMENTS = {
     "Half-Collision Platform": "k",  # → Semisolid platform
     "Spike Ball":              "^",  # → Spikes
     "Icicle":                  "^",  # → Spikes (falling hazard)
+
+    # The remaining objects whose OBJ_META glyph is a leftover from the older,
+    # larger glyph set and isn't in mm2_tileset_we.json. Without an entry here
+    # they leak that raw glyph into the ASCII (e.g. Donut's "Ã"), which then
+    # collapses to the unknown tile at training time. _check_tileset_coverage()
+    # below enforces that every drawable object lands on a real tileset glyph.
+    # terrain / blocks
+    "Donut":                   "d",  # → Donut Block (same falling platform)
+    "Blinking Block":          "O",  # → ON/OFF block (togglable solid)
+    "Crate":                   "B",  # → Brick (breakable box)
+    "Tree":                    "k",  # → Semisolid platform (stand on the canopy)
+    "! Block":                 "B",  # → Brick (solid block flipped by the ! switch)
+    # doors / warps
+    "Warp Box":                "D",  # → Door (instant warp)
+    "Clear Pipe":              "|",  # → Pipe (SM3DW pipe variant)
+    # enemies
+    "Piranha Creeper":         "P",  # → Piranha Plant
+    "Porcupuffer":             "~",  # → Cheep Cheep (aquatic)
+    "Ant Trooper":             "b",  # → Buzzy Beetle (armored ground walker)
+    "Skipsqueak":              "g",  # → Goomba (small stompable walker)
+    "Stingby":                 "L",  # → Lakitu (nearest flying enemy)
+    "Charvaargh":              "&",  # → Lava Bubble (lava fire hazard)
+    "Bully":                   "K",  # → Koopa (ground walker)
+    # items / power-ups
+    "Super Hammer":            "M",  # → Mushroom (power-up pickup)
+    "Cannon Box":              "M",  # → Mushroom (wearable power-up box)
+    "Propeller Box":           "M",  # → Mushroom (wearable power-up box)
+    "Goomba Mask":             "M",  # → Mushroom (wearable power-up box)
+    "Bullet Bill Mask":        "M",  # → Mushroom (wearable power-up box)
+    "Red POW Box":             "W",  # → POW (a POW in a box)
+    "Big Coin":                "c",  # → Coin (free path draws coins; covers the in-block path)
+    # platforms — track/conveyor/snake levels are normally dropped upstream by
+    # extract's --skip_items; these keep them from leaking if that filter is off.
+    "Sprint Platform":         "k",  # → Semisolid platform (SM3DW dash platform)
+    "Koopa Clown Car":         ";",  # → Clown Car
+    "Conveyor Belt":           "k",  # → Semisolid platform
+    "Fast Conveyor Belt":      "k",  # → Semisolid platform
+    "Snake Block":             "k",  # → Semisolid platform (moving path)
+    "Track Block":             "k",  # → Semisolid platform (track-riding block)
+    # Slopes are special-drawn as a ground staircase (see ascii.py); '#' just
+    # records that reduction so the coverage check below stays happy.
+    "Slight Slope":            "#",  # → Ground (staircase fill)
+    "Steep Slope":             "#",  # → Ground (staircase fill)
 }
 
 # Editor/decorative markers with no tileset glyph: dropped from the grid.
@@ -257,6 +300,34 @@ ASCII_DROP = {
     "Key", "Arrow", "Water Marker", "Reel Camera", "Sound Effect",
     "Player", "Track", "Starting Arrow",
 }
+
+
+def _check_tileset_coverage():
+    """Every object we actually draw must end up on a glyph the tileset knows.
+
+    OBJ_META still carries glyphs from the older, larger vocabulary; the ones
+    missing from mm2_tileset_we.json have to be folded onto a real tile via
+    ASCII_REPLACEMENTS (or skipped via ASCII_DROP), or they leak into the ASCII
+    as a raw Latin-1 char and silently become the unknown tile in training --
+    the bug that let Donut's "Ã" through. Run at import so a later OBJ_META edit
+    that forgets the fold fails loudly here instead of polluting a dataset.
+    """
+    leaks = {}
+    for name, (glyph, _color, _cat) in OBJ_META.items():
+        if name == "_unknown" or name in ASCII_DROP:
+            continue
+        final = ASCII_REPLACEMENTS.get(name, glyph)
+        if final not in TILESET:
+            leaks[name] = final
+    if leaks:
+        listing = ", ".join(f"{n!r}->{g!r}" for n, g in sorted(leaks.items()))
+        raise ValueError(
+            f"OBJ_META objects with no tileset glyph: {listing}. Add each to "
+            "ASCII_REPLACEMENTS (fold onto a tileset glyph) or ASCII_DROP (skip it)."
+        )
+
+
+_check_tileset_coverage()
 
 CAT_COLORS = {
     CAT_TERRAIN:  "#C8A050",
