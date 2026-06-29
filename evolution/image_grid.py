@@ -247,8 +247,7 @@ class ImageGridViewer:
     def _save_composed_level(self):
         if not self.composed_scenes:
             return
-        # Mario Maker exports a playable SMM:WE .swe (ascii -> MM2 json -> .swe)
-        # straight into the engine's level folder, not a raw ascii .txt.
+        # Mario Maker saves a .swe into SMM:WE's level folder instead of a .txt
         if self.args.game == 'MM':
             self._save_composed_swe()
             return
@@ -269,41 +268,58 @@ class ImageGridViewer:
             print("Save operation cancelled.")
 
     def _smmwe_niveles_dir(self):
-        """Locate SMM:WE's custom-level folder device-independently.
-
-        SMM:WE keeps imported levels in %LOCALAPPDATA%\\SMM_WE\\Niveles on
-        Windows (e.g. C:\\Users\\<you>\\AppData\\Local\\SMM_WE\\Niveles); reading
-        LOCALAPPDATA instead of hard-coding the user keeps it portable across
-        machines. Off Windows / when SMM:WE isn't installed, fall back to a local
-        "Niveles" folder so the export still produces a file.
-        """
+        """SMM:WE's level folder, %LOCALAPPDATA%\\SMM_WE\\Niveles. Falls back to a
+        local folder when LOCALAPPDATA isn't set (non-Windows)."""
         base = os.environ.get("LOCALAPPDATA")
         if base:
             return os.path.join(base, "SMM_WE", "Niveles")
         return os.path.join(os.getcwd(), "Niveles")
 
-    def _save_composed_swe(self):
-        """Export the composed scene as a Super Mario Maker: Worldwide Engine
-        save file: the mm2 ascii grid -> MM2 level JSON (mm2_ascii_to_json) ->
-        .swe (json_to_swe), written into SMM:WE's Niveles folder so it appears
-        in-game."""
-        # Imported lazily: the converters pull in the whole mm2 toolchain, which
-        # is only needed when actually exporting a Mario Maker level.
+    def _smmwe_exe_path(self):
+        """Path to SMM_WE.exe (installs to Program Files\\SMMWE), or None."""
+        for env in ("ProgramFiles(x86)", "ProgramFiles", "ProgramW6432"):
+            base = os.environ.get(env)
+            if base:
+                exe = os.path.join(base, "SMMWE", "SMM_WE.exe")
+                if os.path.isfile(exe):
+                    return exe
+        return None
+
+    def _compose_swe_bytes(self, name):
+        """Convert the merged composed scene to a .swe (ascii -> json -> swe).
+        Returns (swe_bytes, dropped_counts)."""
         from mm2_ascii_to_json import ascii_to_level
         from json_to_swe import build_world, encode_swe, detect_smmwe_user
         from datetime import datetime
 
-        # 1. mm2 ascii grid for the merged scene (full height, no A* trim).
         sample = self.get_sample_output(self._merge_composed_scenes())
-        # The '_' padding glyph (mm2 id 68) is "nothing here", not a real tile,
-        # but the converter's CHAR_TO_NAME accidentally maps '_' -> "Goal Ground"
-        # (a full-set glyph collision), turning every padded cell into a phantom
-        # object. Treat padding as air (' ', which ascii_to_level skips) so the
-        # exported level only contains the tiles the model actually placed.
+        # '_' is padding, not a real tile, but the converter reads it as Goal
+        # Ground. Treat it as empty space so it doesn't litter the level.
         ascii_text = "\n".join(row.replace("_", " ") for row in sample.level)
 
-        # Default the save dialog into Niveles so it lands where SMM:WE looks,
-        # while still letting the user name the level.
+        level_json = ascii_to_level(ascii_text, source_file=name)
+
+        now = datetime.now()
+        s0, dropped = build_world(
+            level_json,
+            user=detect_smmwe_user(),
+            name=name,
+            desc=None,
+            date_str=now.strftime("%d/%m/%Y"),
+            time_str=now.strftime("%H:%M"),
+        )
+        return encode_swe({"S0": s0, "SB1": {"S1": []}}), dropped
+
+    @staticmethod
+    def _report_dropped(dropped):
+        if dropped:
+            total = sum(dropped.values())
+            summary = ", ".join(f"{n}x {nm}" for nm, n in
+                                sorted(dropped.items(), key=lambda kv: -kv[1]))
+            print(f"  dropped {total} object(s) with no SMM:WE equivalent: {summary}")
+
+    def _save_composed_swe(self):
+        """Save the composed scene as a .swe, prompting for a name in Niveles."""
         niveles_dir = self._smmwe_niveles_dir()
         os.makedirs(niveles_dir, exist_ok=True)
         file_path = filedialog.asksaveasfilename(
@@ -317,31 +333,36 @@ class ImageGridViewer:
             print("Save operation cancelled.")
             return
 
-        # 2. ascii -> MM2 level JSON.
         name = os.path.splitext(os.path.basename(file_path))[0]
-        level_json = ascii_to_level(ascii_text, source_file=name)
-
-        # 3. MM2 JSON -> single-world .swe (no subworld), authored to whoever is
-        # logged into SMM:WE so the level shows up as theirs.
-        now = datetime.now()
-        s0, dropped = build_world(
-            level_json,
-            user=detect_smmwe_user(),
-            name=name,
-            desc=None,
-            date_str=now.strftime("%d/%m/%Y"),
-            time_str=now.strftime("%H:%M"),
-        )
-        swe_bytes = encode_swe({"S0": s0, "SB1": {"S1": []}})
-
+        swe_bytes, dropped = self._compose_swe_bytes(name)
         with open(file_path, "wb") as f:
             f.write(swe_bytes)
         print(f"Composed level exported to {file_path} ({len(swe_bytes)} bytes)")
-        if dropped:
-            total = sum(dropped.values())
-            summary = ", ".join(f"{n}x {nm}" for nm, n in
-                                sorted(dropped.items(), key=lambda kv: -kv[1]))
-            print(f"  dropped {total} object(s) with no SMM:WE equivalent: {summary}")
+        self._report_dropped(dropped)
+
+    def _play_composed_swe(self):
+        """Save the composed level to Niveles and launch SMM:WE. There's no way
+        to boot straight into a level, so you pick 'composed_level' in-game."""
+        import subprocess
+
+        name = "composed_level"
+        niveles_dir = self._smmwe_niveles_dir()
+        os.makedirs(niveles_dir, exist_ok=True)
+        swe_bytes, dropped = self._compose_swe_bytes(name)
+        out_path = os.path.join(niveles_dir, name + ".swe")
+        with open(out_path, "wb") as f:
+            f.write(swe_bytes)
+        print(f"Composed level exported to {out_path} ({len(swe_bytes)} bytes)")
+        self._report_dropped(dropped)
+
+        exe = self._smmwe_exe_path()
+        if exe is None:
+            print("SMM:WE executable not found (looked in Program Files\\SMMWE). "
+                  f"Open SMM:WE manually and pick '{name}' from the level browser.")
+            return
+        # run from the install dir so the game finds data.win
+        subprocess.Popen([exe], cwd=os.path.dirname(exe))
+        print(f"Launched SMM:WE -- open the level browser and play '{name}'.")
 
     def _merge_composed_scenes(self):
         scenes = self.composed_scenes
@@ -363,8 +384,7 @@ class ImageGridViewer:
             char_grid = scene_to_ascii(scene, self.id_to_char, shorten=False)
             level = SampleOutput(level=scene, use_snes_graphics=use_snes_graphics)
         elif self.args.game == 'MM':
-            # Mario Maker: save the full scene as mm2 ascii (no 15-row A* trim);
-            # save_level writes these rows straight to the .txt file.
+            # Mario Maker: keep the full scene (no 15-row A* trim)
             char_grid = scene_to_ascii(scene, self.id_to_char, shorten=False)
             level = SampleOutput(level=char_grid)
         elif self.args.game == 'Mario':
@@ -382,6 +402,8 @@ class ImageGridViewer:
                 level = self.get_sample_output(composed_scene, use_snes_graphics=self.use_snes_graphics.get())
                 #print("Level to play:", level)
                 level.play(game="loderunner", level_idx=1)
+            elif self.args.game == "MM":
+                self._play_composed_swe()
             else:
                 #Default: Mario play logic
                 level = self.get_sample_output(composed_scene, use_snes_graphics=self.use_snes_graphics.get())

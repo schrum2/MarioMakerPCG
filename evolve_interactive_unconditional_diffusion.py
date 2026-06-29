@@ -23,9 +23,7 @@ class DiffusionEvolver(Evolver):
         #self.pipe.print_unet_architecture()
         _, self.id_to_char, self.char_to_id, self.tile_descriptors = extract_tileset(tileset_path)
 
-        # Mario Maker reads tile names straight from the tileset (sorted tiles +
-        # '_' padding), matching the MM caption pipeline rather than the Mario
-        # tag table; built here so generate_image can caption MM scenes.
+        # MM captions read tile names from the tileset, not the Mario tag table
         if args is not None and args.game == 'MM':
             self.mm_id_to_char = build_id_to_char(tileset_path)
             self.mm_char_names = get_char_names(tileset_path)
@@ -107,8 +105,7 @@ class DiffusionEvolver(Evolver):
         if args.game == 'Mario':
             samples = visualize_samples(images)
         elif args.game == 'MM':
-            # game='MM' routes to render_mm2 for the accurate Mario Maker 2 sprite
-            # render (reconstructs multi-tile objects), not the flat Mario tiles.
+            # game='MM' renders the real MM2 sprites instead of flat Mario tiles
             samples = visualize_samples(images, game='MM')
         elif args.game == 'LR':
             samples = visualize_samples(images, game='LR')
@@ -140,7 +137,7 @@ if __name__ == "__main__":
     if args.game == "Mario":
         args.tileset_path = common_settings.MARIO_TILESET
     elif args.game == 'MM':
-        # Mario Maker 2: canonical mm2_tileset_we.json (69 ids), 20x20 scenes.
+        # Mario Maker 2: mm2_tileset_we.json, 20x20 scenes
         args.tileset_path = common_settings.MARIO_TILESET
         args.width = common_settings.MARIO_WIDTH
     elif args.game == 'LR':
