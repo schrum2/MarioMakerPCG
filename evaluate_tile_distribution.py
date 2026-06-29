@@ -80,7 +80,7 @@ _MM2_OBJ_NAMES = {
     # items
     "¢": "Coin",            "$": "Red Coin",             "£": "Large Coin",
     "U": "1-Up Mushroom",   "i": "Fire Flower",          "¤": "Super Star",
-    "M": "Super Mushroom",  "¶": "Big Mushroom",         "§": "SMB2 Mushroom",
+    "M": "Super Mushroom",  "¶": "Big Mushroom",
     "¬": "Super Hammer",    "¦": "P Switch",             "¯": "POW Block",
     "±": "Spring",          "µ": "Goomba's Shoe",        "]": "Cannon Box",
     "}": "Propeller Box",   ")": "Goomba Mask",          "°": "Bullet Bill Mask",

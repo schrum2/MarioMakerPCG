@@ -243,6 +243,16 @@ def detect_empty_char(tileset_path):
     return " " if " " in tiles else "-"
 
 
+def detect_goal_chars(tileset_path):
+    # Characters the tileset tags as the level goal/flagpole. Falls back to the
+    # native MM2 glyph 'G' when the tileset carries no goal tag (e.g. the
+    # smb/extended tilesets), so --strip_goal still works on raw MM2 input.
+    with open(tileset_path, encoding="utf-8") as f:
+        tiles = json.load(f)["tiles"]
+    goal = {ch for ch, tags in tiles.items() if "goal" in tags or "flagpole" in tags}
+    return goal or {"G"}
+
+
 def load_converter(filename, module_name):
     import importlib.util
     path = os.path.join(HERE, filename)
@@ -401,6 +411,10 @@ def main():
                         help="Collect every window position as a separate sample instead of keeping only the best window.")
     parser.add_argument("--stride", type=int, default=None,
                         help="Step size (in tiles) between windows when --sliding_window is active. Default: the window width (no overlap).")
+    parser.add_argument("--strip_goal", action="store_true",
+                        help="Replace the goal/flagpole tile with air (the empty "
+                             "tile) before windowing, so levels are encoded without "
+                             "their end goal.")
     parser.add_argument("--min_tiles", type=int, default=20,
                         help="Drop samples with fewer than this many non-air tiles "
                              "(sky and unknown tiles don't count). Default: 20.")
@@ -449,6 +463,7 @@ def main():
     tile_to_id, extra_tile = load_tileset(tileset_path)
 
     default_empty_char = detect_empty_char(tileset_path)
+    goal_chars = detect_goal_chars(tileset_path) if args.strip_goal else set()
 
     converter_mod = None
     if args.convert_to_vglc:
@@ -535,6 +550,13 @@ def main():
                             images_missing += 1
                             print(f"  [no-image] {full_name}: no level image found "
                                   f"on this machine; sample(s) kept without an image crop.")
+
+                # Wipe the goal/flagpole tile to air so the level trains without
+                # its end goal. Done after any conversion so we match the glyphs
+                # actually in `rows`, and after empty_char is known.
+                if goal_chars:
+                    table = str.maketrans({g: empty_char for g in goal_chars})
+                    rows = [r.translate(table) for r in rows]
 
                 total_chars, unmapped_chars_count, unmapped_chars = check_unmapped_chars(rows, tile_to_id, extra_tile)
                 if total_chars and unmapped_chars_count / total_chars > 0.2:

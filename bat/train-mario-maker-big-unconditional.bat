@@ -13,9 +13,9 @@ set GAME=MM
 set DIFF_OUTPUT=%GAME%-big-unconditional%SEED%
 
 REM Need to set this! Must be 32x32 if 4 dim_mults are used
-set DATASET=TODO.json
+set DATASET=1-_10k_levels_32x32_new.json
 
-python train_diffusion.py --model_dim 256 --dim_mults 1 2 4 8 --attention_head_dim 32 --down_block_types "DownBlock2D" "AttnDownBlock2D" "AttnDownBlock2D" "AttnDownBlock2D" --up_block_types "AttnUpBlock2D" "AttnUpBlock2D" "AttnUpBlock2D" "UpBlock2D" --game %GAME% --save_image_epochs 20 --output_dir "%DIFF_OUTPUT%" --num_epochs 500 --json datasets\%DATASET% --seed %SEED% < "%YES_FILE%"
+python train_diffusion.py --mixed_precision bf16 --batch_size 8 --model_dim 192 --dim_mults 1 2 4 4 --attention_head_dim 8 --down_block_types "DownBlock2D" "AttnDownBlock2D" "AttnDownBlock2D" "AttnDownBlock2D" --up_block_types "AttnUpBlock2D" "AttnUpBlock2D" "AttnUpBlock2D" "UpBlock2D" --game %GAME% --save_image_epochs 20 --output_dir "%DIFF_OUTPUT%" --num_epochs 500 --json datasets\%DATASET% --seed %SEED%
 
 
 REM call run_diffusion too
