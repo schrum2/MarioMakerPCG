@@ -245,22 +245,103 @@ class ImageGridViewer:
         self.select_composed_thumbnail(new_idx)
 
     def _save_composed_level(self):
-        if self.composed_scenes:
-            level = self.get_sample_output(self._merge_composed_scenes())
-            # Always open in the current working directory or a subfolder
-            initial_dir = os.path.join(os.getcwd(), "Composed Levels")
-            os.makedirs(initial_dir, exist_ok=True)  # Ensure the folder exists
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".txt",
-                filetypes=[("Text files", "*.txt")],
-                title="Save Composed Level As",
-                initialdir=initial_dir
-            )
-            if file_path:
-                level.save(file_path)
-                print(f"Composed level saved to {file_path}")
-            else:
-                print("Save operation cancelled.")
+        if not self.composed_scenes:
+            return
+        # Mario Maker exports a playable SMM:WE .swe (ascii -> MM2 json -> .swe)
+        # straight into the engine's level folder, not a raw ascii .txt.
+        if self.args.game == 'MM':
+            self._save_composed_swe()
+            return
+        level = self.get_sample_output(self._merge_composed_scenes())
+        # Always open in the current working directory or a subfolder
+        initial_dir = os.path.join(os.getcwd(), "Composed Levels")
+        os.makedirs(initial_dir, exist_ok=True)  # Ensure the folder exists
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt")],
+            title="Save Composed Level As",
+            initialdir=initial_dir
+        )
+        if file_path:
+            level.save(file_path)
+            print(f"Composed level saved to {file_path}")
+        else:
+            print("Save operation cancelled.")
+
+    def _smmwe_niveles_dir(self):
+        """Locate SMM:WE's custom-level folder device-independently.
+
+        SMM:WE keeps imported levels in %LOCALAPPDATA%\\SMM_WE\\Niveles on
+        Windows (e.g. C:\\Users\\<you>\\AppData\\Local\\SMM_WE\\Niveles); reading
+        LOCALAPPDATA instead of hard-coding the user keeps it portable across
+        machines. Off Windows / when SMM:WE isn't installed, fall back to a local
+        "Niveles" folder so the export still produces a file.
+        """
+        base = os.environ.get("LOCALAPPDATA")
+        if base:
+            return os.path.join(base, "SMM_WE", "Niveles")
+        return os.path.join(os.getcwd(), "Niveles")
+
+    def _save_composed_swe(self):
+        """Export the composed scene as a Super Mario Maker: Worldwide Engine
+        save file: the mm2 ascii grid -> MM2 level JSON (mm2_ascii_to_json) ->
+        .swe (json_to_swe), written into SMM:WE's Niveles folder so it appears
+        in-game."""
+        # Imported lazily: the converters pull in the whole mm2 toolchain, which
+        # is only needed when actually exporting a Mario Maker level.
+        from mm2_ascii_to_json import ascii_to_level
+        from json_to_swe import build_world, encode_swe, detect_smmwe_user
+        from datetime import datetime
+
+        # 1. mm2 ascii grid for the merged scene (full height, no A* trim).
+        sample = self.get_sample_output(self._merge_composed_scenes())
+        # The '_' padding glyph (mm2 id 68) is "nothing here", not a real tile,
+        # but the converter's CHAR_TO_NAME accidentally maps '_' -> "Goal Ground"
+        # (a full-set glyph collision), turning every padded cell into a phantom
+        # object. Treat padding as air (' ', which ascii_to_level skips) so the
+        # exported level only contains the tiles the model actually placed.
+        ascii_text = "\n".join(row.replace("_", " ") for row in sample.level)
+
+        # Default the save dialog into Niveles so it lands where SMM:WE looks,
+        # while still letting the user name the level.
+        niveles_dir = self._smmwe_niveles_dir()
+        os.makedirs(niveles_dir, exist_ok=True)
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".swe",
+            filetypes=[("SMM:WE level", "*.swe")],
+            title="Save Composed Level to SMM:WE",
+            initialdir=niveles_dir,
+            initialfile="composed_level.swe",
+        )
+        if not file_path:
+            print("Save operation cancelled.")
+            return
+
+        # 2. ascii -> MM2 level JSON.
+        name = os.path.splitext(os.path.basename(file_path))[0]
+        level_json = ascii_to_level(ascii_text, source_file=name)
+
+        # 3. MM2 JSON -> single-world .swe (no subworld), authored to whoever is
+        # logged into SMM:WE so the level shows up as theirs.
+        now = datetime.now()
+        s0, dropped = build_world(
+            level_json,
+            user=detect_smmwe_user(),
+            name=name,
+            desc=None,
+            date_str=now.strftime("%d/%m/%Y"),
+            time_str=now.strftime("%H:%M"),
+        )
+        swe_bytes = encode_swe({"S0": s0, "SB1": {"S1": []}})
+
+        with open(file_path, "wb") as f:
+            f.write(swe_bytes)
+        print(f"Composed level exported to {file_path} ({len(swe_bytes)} bytes)")
+        if dropped:
+            total = sum(dropped.values())
+            summary = ", ".join(f"{n}x {nm}" for nm, n in
+                                sorted(dropped.items(), key=lambda kv: -kv[1]))
+            print(f"  dropped {total} object(s) with no SMM:WE equivalent: {summary}")
 
     def _merge_composed_scenes(self):
         scenes = self.composed_scenes
