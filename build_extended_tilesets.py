@@ -6,12 +6,6 @@ Generate the frequency-ranked "extended" tilesets (20/30/40/50/60 tiles) used by
 mm2view_to_extended.py to shrink the 69-tile mm2_tileset_we vocabulary down to the
 handful of tiles that actually carry the dataset.
 
-The idea is simple: a diffusion model that has to learn 69 near-empty tile classes
-wastes most of its capacity on tiles that appear a fraction of a percent of the
-time. So we walk the real tile-frequency distribution from most to least common,
-keep the first N distinct tiles, and let the converter fold everything rarer onto
-its closest survivor (see mm2view_to_extended.py for the tag-based replacement).
-
 FREQUENCY_ORDER below is the tile_counts ordering straight out of
 MM_Levels-regular_tile_distribution.json (descending). Each name is also a tag in
 mm2_tileset_we.json, which is how we recover the glyph + the full tag list to copy
