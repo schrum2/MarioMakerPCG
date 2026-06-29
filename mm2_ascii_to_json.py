@@ -261,7 +261,7 @@ COALESCE_POLICY = {
     # placed in rows, so a fixed 2x2 guess wrongly merged adjacent ones.
     # variable-size platforms / structures
     "Mushroom Platform":  (_MUSHROOM,),    # cap (top row) + centred stem
-    "Semisolid Platform": (_BBOX,),
+    "Semisolid Platform": (_BBOX,),   # box repair, see repair_semisolid_cells
     "Half-Collision Platform": (_BBOX,),
     "One-Way Wall":       (_BBOX,),
     "One-Way":            (_BBOX,),
@@ -309,12 +309,65 @@ def _runs(values):
     yield start, prev - start + 1
 
 
-def coalesce(name, cells, out):
+# ---------------------------------------------------------------------------
+# Semisolid platform repair (ASCII -> JSON)
+#
+# A Semisolid Platform (id 16) is a solid rectangular BOX in SMM2: you stand on
+# its top and pass through it from below / the sides. The diffusion model doesn't
+# know that and sprays the platform's 'k' glyph as lone tiles and ragged blobs
+# that don't form clean rectangles. coalesce()'s plain _BBOX (one box per
+# component) then leaves a swarm of 1x1 / sliver "platforms".
+#
+# repair_semisolid_cells() rebuilds a real box for EACH 4-connected blob. Blobs
+# at different heights stay SEPARATE platforms -- they are never merged together:
+#   1. Take the blob's bounding columns and its TOP row (the walkable cap).
+#   2. Stretch the width to SMM2's 3-tile minimum (PLATFORM_MIN_SIZE), centred,
+#      so even a lone tile becomes a placeable 3-wide platform.
+#   3. Drag the box's bottom straight DOWN until it rests on ground (or the level
+#      floor), keeping the cap where the model put it -- a semisolid reads as a
+#      solid block from its top surface down to the floor, not a floating sliver.
+#   4. Enforce the 3-tall minimum if the cap already sits right above the ground.
+# ---------------------------------------------------------------------------
+PLATFORM_MIN_SIZE = 3       # SMM2 won't place a semisolid smaller than 3x3
+
+
+def repair_semisolid_cells(cells, ground=None):
+    """Turn (col, row) Semisolid-Platform 'k' cells into a list of
+    (col, row, w, h) box rectangles -- one box per 4-connected blob, widened to
+    the 3-tile minimum and dragged down to `ground` (a set of (col, row) solid
+    cells; falsy = drag to the floor). See the section comment for rationale."""
+    ground = ground or set()
+    boxes = []
+    for comp in _connected_components(cells):
+        cols = [c for c, _ in comp]
+        rows = [r for _, r in comp]
+        c0, c1 = min(cols), max(cols)
+        cap_row = max(rows)                        # top / walkable surface
+        w = c1 - c0 + 1
+        if w < PLATFORM_MIN_SIZE:                  # widen symmetrically
+            c0 = max(0, c0 - (PLATFORM_MIN_SIZE - w) // 2)
+            w = PLATFORM_MIN_SIZE
+        c1 = c0 + w - 1
+        # Drag the bottom down until every column directly beneath the base rests
+        # on ground (or we hit the floor) -- the same rest-on-ground rule
+        # json_to_bcd._fix_platform_objects uses.
+        bottom = min(rows)
+        while bottom > 0 and any((c, bottom - 1) not in ground
+                                 for c in range(c0, c1 + 1)):
+            bottom -= 1
+        if cap_row - bottom + 1 < PLATFORM_MIN_SIZE:   # 3-tall minimum
+            bottom = max(0, cap_row - (PLATFORM_MIN_SIZE - 1))
+        boxes.append((c0, bottom, w, cap_row - bottom + 1))
+    return boxes
+
+
+def coalesce(name, cells, out, ground=None):
     """Append reconstructed object(s) for every cell tagged `name` to `out`.
 
     `cells` is the set of (col, row) cells carrying this object's glyph; the
     policy in COALESCE_POLICY decides how connected blocks become objects.
-    Objects with no policy stay 1x1 (one per cell)."""
+    `ground` is the set of (col, row) solid ground cells, used to drag semisolid
+    platforms down to the floor. Objects with no policy stay 1x1 (one per cell)."""
     policy = COALESCE_POLICY.get(name)
     if policy is None:
         for col, row in cells:
@@ -322,6 +375,12 @@ def coalesce(name, cells, out):
         return
 
     kind = policy[0]
+    # Semisolid platforms get the dedicated box repair above rather than a plain
+    # per-component bbox -- the model's 'k' glyph is too scattered for that.
+    if name == "Semisolid Platform":
+        for col, row, w, h in repair_semisolid_cells(cells, ground):
+            out.append(make_object(name, col, row, w, h))
+        return
     for comp in _connected_components(cells):
         cols = [c for c, _ in comp]
         rows = [r for _, r in comp]
@@ -456,6 +515,7 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
     # (a 2x2 Thwomp -> one object, not four; an N-wide Mushroom Platform -> one
     # platform, not N tiny whole mushrooms; a 2-wide pipe -> one pipe). Objects
     # with no policy fall through to one 1x1 object per cell. See coalesce().
+    ground_cells = {(g["x"], g["y"]) for g in ground}
     for name, cells in obj_cells.items():
         if name in _CONTAINER_BLOCK_NAMES:
             # Container blocks have no multi-tile policy (one object per cell);
@@ -467,7 +527,7 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
                     obj["cid"] = cid
                 objects.append(obj)
             continue
-        coalesce(name, cells, objects)
+        coalesce(name, cells, objects, ground_cells)
 
     # Recover goal_x/goal_y from the painted flagpole. goal_x is stored in
     # TENTHS of a tile (both build_metadata in json_to_swe and normalize_level
