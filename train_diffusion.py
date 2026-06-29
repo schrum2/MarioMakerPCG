@@ -105,6 +105,7 @@ def parse_args():
     parser.add_argument("--attention_head_dim", type=int, default=8, help="Number of attention heads")
     
     # Training args
+    parser.add_argument("--max_grad_norm", type=float, default=1.0, help="Max gradient norm for clipping")
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--num_epochs", type=int, default=500, help="Number of training epochs")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1, help="Gradient accumulation steps")
@@ -767,11 +768,12 @@ def main():
                     args, model, batch, noise_scheduler, loss_fn, tokenizer_hf, text_encoder, accelerator
                 )
                 accelerator.backward(loss)
+                if accelerator.sync_gradients:
+                    accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
             train_loss += loss.detach().item()
-
 
             # Update progress bar
             progress_bar.update(1)
