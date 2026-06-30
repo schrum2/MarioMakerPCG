@@ -11,6 +11,7 @@ as a grid of tile ids.
 
 import argparse
 import json
+import math
 import os
 import sys
 import re
@@ -415,15 +416,16 @@ def main():
                         help="Replace the goal/flagpole tile with air (the empty "
                              "tile) before windowing, so levels are encoded without "
                              "their end goal.")
-    parser.add_argument("--min_tiles", type=int, default=20,
-                        help="Drop samples with fewer than this many non-air tiles "
-                             "(sky and unknown tiles don't count). Default: 20.")
+    parser.add_argument("--min_tiles_pct", type=float, default=7.0,
+                        help="Drop samples where non-air tiles (sky and unknown "
+                             "tiles don't count) make up less than this percent of "
+                             "the window. Default: 7 (i.e. 7%%).")
     parser.add_argument("--dropped_output", default=None,
                         help="Where to write a second dataset holding the samples "
-                             "rejected by --min_tiles. Default: '<output>_dropped.json'. "
+                             "rejected by --min_tiles_pct. Default: '<output>_dropped.json'. "
                              "Pass --no_dropped to skip writing it.")
     parser.add_argument("--no_dropped", action="store_true",
-                        help="Don't write the 'dropped' dataset of below-min_tiles samples.")
+                        help="Don't write the 'dropped' dataset of below-min_tiles_pct samples.")
     parser.add_argument("--with_images", action="store_true",
                         help="For every tile sample, also crop the matching "
                              f"{WINDOW_W}x{WINDOW_H}-tile region out of the level's "
@@ -449,6 +451,8 @@ def main():
     WINDOW_W = args.window_w
     # Default stride is the window width (no overlap), tracking --window_w.
     stride = args.stride if args.stride is not None else WINDOW_W
+    # Convert the percentage threshold into a tile count against the actual window size.
+    min_tiles = math.ceil((args.min_tiles_pct / 100.0) * WINDOW_H * WINDOW_W)
 
     if args.with_images and (args.convert_to_vglc or args.convert_to_extended):
         parser.error("--with_images cannot be combined with --convert_to_vglc / "
@@ -592,14 +596,14 @@ def main():
                     kept = []
                     dropped_windows = []
                     for x, scene in windows:
-                        if count_non_air_tiles(scene, empty_id, extra_id) >= args.min_tiles:
+                        if count_non_air_tiles(scene, empty_id, extra_id) >= min_tiles:
                             kept.append((x, scene))
                         else:
                             dropped_windows.append((x, scene))
                     dropped_min_samples += len(dropped_windows)
                     dropped_samples = [(f"{full_name}_{i}", x, scene) for i, (x, scene) in enumerate(dropped_windows)]
                     samples = [(f"{full_name}_{i}", x, scene) for i, (x, scene) in enumerate(kept)]
-                    suffix = f", {len(dropped_windows)} under {args.min_tiles} tiles dropped" if dropped_windows else ""
+                    suffix = f", {len(dropped_windows)} under {min_tiles} tiles dropped" if dropped_windows else ""
                     print(f"  [OK] {full_name} ({len(samples)} windows{suffix})")
                 else:
                     scene, best_x = extract_best_window(rows, tile_to_id, extra_tile=extra_tile, empty_char=empty_char)
@@ -609,8 +613,8 @@ def main():
                         if level_img is not None:
                             level_img.close()
                         continue
-                    if count_non_air_tiles(scene, empty_id, extra_id) < args.min_tiles:
-                        print(f"  [OK] {full_name} (under {args.min_tiles} tiles, dropped)")
+                    if count_non_air_tiles(scene, empty_id, extra_id) < min_tiles:
+                        print(f"  [OK] {full_name} (under {min_tiles} tiles, dropped)")
                         dropped_min_samples += 1
                         dropped_samples = [(full_name, best_x, scene)]
                     else:
@@ -648,7 +652,7 @@ def main():
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(dataset, f, indent=2)
 
-    # Save the companion "dropped" dataset of below-min_tiles samples.
+    # Save the companion "dropped" dataset of below-min_tiles_pct samples.
     dropped_file = None
     if keep_dropped:
         if args.dropped_output:
@@ -661,7 +665,8 @@ def main():
 
     print(f"\nCompleted! Packaged {processed} items into {output_file} ({skipped} skipped).")
     if dropped_min_samples:
-        print(f"Dropped for --min_tiles ({args.min_tiles}): {dropped_min_samples} sample(s).")
+        print(f"Dropped for --min_tiles_pct ({args.min_tiles_pct:g}%, "
+              f"{min_tiles} tiles): {dropped_min_samples} sample(s).")
     if keep_dropped:
         print(f"Dropped dataset: {len(dataset_dropped)} sample(s) written to {dropped_file}.")
     if args.with_images:
