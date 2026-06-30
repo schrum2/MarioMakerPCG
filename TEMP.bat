@@ -88,3 +88,50 @@ python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.jso
 REM --- 2f: combine the two strongest single-axis wins (lower threshold + harder negatives) to check for interaction effects ---
 python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim16_thresh01_neg15" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.01 --negative_samples 15
 python train_skipgram.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "Skip_dim16_thresh01_neg15" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.01 --negative_samples 15
+
+REM ==========================================================================
+REM SWEEP 3: follow-up based on sweep 2 findings.
+REM
+REM Key findings from sweep 2:
+REM   - Both methods still improving monotonically at thresh=0.01, the lowest
+REM     tested -- the optimum has not been found yet. Testing 0.007, 0.005,
+REM     0.003, 0.001 to find the floor. Going below 0.001 is unlikely to help
+REM     since at that point subsampling barely touches anything.
+REM   - neg=15 beat both default (10) and neg=20 cleanly (mean 0.704 vs 0.510).
+REM     But neg=15 was only paired with thresh=0.03 for skipgram, and the
+REM     best-performing thresh=0.01 runs used default neg=10. These need to be
+REM     combined properly.
+REM   - B2V_dim16_thresh03_cw ranked 4th despite using thresh=0.03 -- highest
+REM     effective rank in the whole batch (15.19/16, 94.9%). Class weights at
+REM     thresh=0.01 was never tested and is the most promising untried combo.
+REM   - dim=24 scored well (ranks 9-10) but only at thresh=0.03. Worth one
+REM     targeted test at thresh=0.01 with neg=15 to see if the same improvement
+REM     carries over before deciding whether to invest more in higher dims.
+REM ==========================================================================
+
+REM --- 3a: push threshold below 0.01 to find the actual floor, both methods, dim=16 ---
+python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim16_thresh0p007" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.007
+python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim16_thresh0p005" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.005
+python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim16_thresh0p003" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.003
+python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim16_thresh0p001" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.001
+python train_skipgram.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "Skip_dim16_thresh0p007" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.007
+python train_skipgram.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "Skip_dim16_thresh0p005" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.005
+python train_skipgram.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "Skip_dim16_thresh0p003" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.003
+python train_skipgram.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "Skip_dim16_thresh0p001" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.001
+
+REM --- 3b: combine best threshold (0.01) with best neg_samples (15) for skipgram --
+REM     (block2vec already has B2V_dim16_thresh01_neg15 from sweep 2)
+REM     Also pair neg=15 with the lower thresholds we're now testing.
+python train_skipgram.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "Skip_dim16_thresh0p005_neg15" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.005 --negative_samples 15
+python train_skipgram.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "Skip_dim16_thresh0p003_neg15" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.003 --negative_samples 15
+python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim16_thresh0p005_neg15" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.005 --negative_samples 15
+python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim16_thresh0p003_neg15" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.003 --negative_samples 15
+
+REM --- 3c: class weights at the best threshold -- the single most promising untried combo ---
+python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim16_thresh01_cw" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.01 --use_class_weights
+python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim16_thresh01_cw_neg15" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.01 --use_class_weights --negative_samples 15
+
+REM --- 3d: one targeted dim=24 run at the best known settings, to see whether
+REM     the higher-dim advantage survives the lower threshold / neg=15 combination
+python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim24_thresh01_neg15" --embedding_dim 24 --vocab_size 69 --subsample_threshold 0.01 --negative_samples 15
+python train_skipgram.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "Skip_dim24_thresh01_neg15" --embedding_dim 24 --vocab_size 69 --subsample_threshold 0.01 --negative_samples 15
