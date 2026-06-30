@@ -1357,6 +1357,13 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
             entry["image"] = image_rel
         for idx, cap in enumerate(captions):
             entry["caption" if idx == 0 else f"caption{idx}"] = cap
+        # Record which model/backend produced these captions, inline per entry
+        # (the output stays a flat JSON array, so a top-level metadata block would
+        # break load_existing/split_dataset_into_n). The deterministic 'prompt'
+        # caption is appended above but isn't model-generated, so this provenance
+        # only ever describes the LLM captions.
+        entry["caption_model"] = model
+        entry["caption_backend"] = backend
         if deterministic:
             entry["prompt"] = deterministic
         results.append(entry)
@@ -1367,7 +1374,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
     _write(output_path, results)
     print(
-        f"\nDone. Generated {generated} new captions, "
+        f"\nDone. Generated {generated} new captions with {backend}/{model}, "
         f"{skipped} resumed, {errors} errors -> {output_path}"
     )
 
