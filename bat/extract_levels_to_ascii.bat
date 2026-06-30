@@ -57,6 +57,10 @@ set BCD_DIR=%OUTPUT%\bcd
 set JSON_DIR=%OUTPUT%\json
 set IMAGES_DIR=%OUTPUT%\images
 set ASCII_DIR=%OUTPUT%\ascii
+REM Per-level metadata sidecar (level_name/difficulty/gamestyle/theme/tags),
+REM keyed by ascii stem. build_dataset_with_ascii.py reads it with --metadata
+REM (or auto-detects it since it lives in the ascii folder).
+set METADATA=%ASCII_DIR%\metadata.json
 
 REM With a name we cap the matching levels (--name_count); without one we just
 REM limit the total. Either way COUNT means "how many levels to extract".
@@ -77,7 +81,7 @@ if %ERRORLEVEL% neq 0 ( popd & echo ERROR: batch_convert.py failed. & exit /b 1 
 popd
 
 echo === Step 3: Converting .json files to ASCII ===
-python mm2_json_to_ascii.py "%JSON_DIR%" "%ASCII_DIR%"
+python mm2_json_to_ascii.py "%JSON_DIR%" "%ASCII_DIR%" --metadata_output "%METADATA%"
 if %ERRORLEVEL% neq 0 ( echo ERROR: mm2_json_to_ascii.py failed. & exit /b 1 )
 
 REM Record the name filter and the level count (one .txt per level) so
@@ -93,7 +97,11 @@ if defined DIFF_VALUES echo difficulty=%DIFF_VALUES%
 )>"%OUTPUT%\extract_info.txt"
 
 echo === Done! ===
-echo   BCDs:   %BCD_DIR%
-echo   JSON:   %JSON_DIR%
-echo   Images: %IMAGES_DIR%
-echo   ASCII:  %ASCII_DIR%
+echo   BCDs:     %BCD_DIR%
+echo   JSON:     %JSON_DIR%
+echo   Images:   %IMAGES_DIR%
+echo   ASCII:    %ASCII_DIR%
+echo   Metadata: %METADATA%
+echo.
+echo Build the dataset with the metadata folded in, e.g.:
+echo   python build_dataset_with_ascii.py --input_file "%ASCII_DIR%" --output dataset.json --tileset mm2_tileset_we.json --metadata "%METADATA%"

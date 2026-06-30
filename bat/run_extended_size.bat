@@ -59,7 +59,19 @@ echo === SIZE=%SIZE% (%TILESET%, NUM_TILES=%NUM_TILES%)  INPUT=%INPUT% ===
 
 echo.
 echo === [1/4] sliding-window dataset (20x20, stride %STRIDE%) reduced to the %TILESET% id space ===
-%PY% build_dataset_with_ascii.py --input_file "%INPUT%" --output "%RAW%" --tileset %TILESET% --convert_to_extended --sliding_window --stride %STRIDE%
+REM Fold in the level-metadata sidecar the extract pipeline writes next to the
+REM ascii files (folder input -> INPUT\metadata.json; single file -> its folder),
+REM matching where bat\extract_levels_to_ascii.bat puts it. Passed only when it
+REM exists, so inputs prepared without the extract pipeline still build.
+set "METADATA="
+if exist "%INPUT%\" (
+    set "METADATA=%INPUT%\metadata.json"
+) else (
+    for %%I in ("%INPUT%") do set "METADATA=%%~dpImetadata.json"
+)
+set "META_ARG="
+if defined METADATA if exist "%METADATA%" set "META_ARG=--metadata "%METADATA%""
+%PY% build_dataset_with_ascii.py --input_file "%INPUT%" --output "%RAW%" --tileset %TILESET% --convert_to_extended --sliding_window --stride %STRIDE% %META_ARG%
 if errorlevel 1 goto error
 
 echo.

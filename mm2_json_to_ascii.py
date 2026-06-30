@@ -606,7 +606,21 @@ def build_ascii_grid(level):
     return ["".join(r).rstrip() for r in grid]
 
 
-def convert_file(infile, outdir):
+def level_metadata(lvl):
+    """Pull the human-readable fields we want to carry into the final dataset out
+    of a (Toost-produced) level dict. gamestyle/theme/name come from Toost; tags
+    and difficulty are folded in earlier by batch_convert.py from the server-side
+    columns that aren't in the .bcd."""
+    return {
+        "level_name": lvl.get("name", ""),
+        "difficulty": lvl.get("difficulty"),
+        "gamestyle": lvl.get("gamestyle"),
+        "theme": lvl.get("theme"),
+        "tags": lvl.get("tags", []),
+    }
+
+
+def convert_file(infile, outdir, metadata=None):
     data = json.loads(Path(infile).read_text(encoding="utf-8"))
     levels = data if isinstance(data, list) else [data]
 
@@ -617,25 +631,41 @@ def convert_file(infile, outdir):
     for idx,lvl in enumerate(levels, start=1):
         stem = Path(infile).stem
         suffix = f"_{idx}" if len(levels) > 1 else ""
-        outfile = Path(outdir) / f"{stem}{suffix}.txt"
+        out_stem = f"{stem}{suffix}"
+        outfile = Path(outdir) / f"{out_stem}.txt"
         outfile.write_text("\n".join(build_ascii_grid(lvl)) + "\n", encoding="utf-8")
+        # Key the metadata by the ascii stem so build_dataset_with_ascii.py can
+        # look it up by the same stem when it reads these .txt files back.
+        if metadata is not None:
+            metadata[out_stem] = level_metadata(lvl)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("input_folder")
     ap.add_argument("output_folder")
+    ap.add_argument("--metadata_output", default=None,
+                    help="Where to write the per-level metadata JSON (level_name, "
+                         "difficulty, gamestyle, theme, tags), keyed by ascii file "
+                         "stem. Default: <output_folder>/metadata.json. This is the "
+                         "file build_dataset_with_ascii.py reads with --metadata.")
     args = ap.parse_args()
 
     outdir = Path(args.output_folder)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    metadata = {}
     for jf in sorted(Path(args.input_folder).glob("*.json")):
         try:
-            convert_file(jf, outdir)
+            convert_file(jf, outdir, metadata)
             print(f"Converted {jf.name}")
         except Exception as e:
             print(f"Failed {jf.name}: {e}")
+
+    meta_path = Path(args.metadata_output) if args.metadata_output else outdir / "metadata.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"Wrote metadata for {len(metadata)} level(s) -> {meta_path}")
 
 if __name__ == "__main__":
     main()

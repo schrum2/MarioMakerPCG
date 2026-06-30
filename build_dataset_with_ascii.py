@@ -236,6 +236,31 @@ def collect_input_files(input_path):
         return [p]
     sys.exit(f"ERROR: Input path not found: {input_path}")
 
+def load_level_metadata(metadata_arg, input_path):
+    """Load the per-level metadata map (ascii stem -> {level_name, difficulty,
+    gamestyle, theme, tags}) written by mm2_json_to_ascii.py. Uses the explicit
+    --metadata path when given; otherwise looks for a 'metadata.json' sitting in
+    the input folder (or beside a single input file) so the export pipeline's
+    sidecar is picked up automatically. Returns {} when there's nothing to load."""
+    if metadata_arg:
+        path = Path(metadata_arg)
+        if not path.is_file():
+            sys.exit(f"ERROR: Metadata file not found at {metadata_arg}")
+    else:
+        p = Path(input_path)
+        folder = p if p.is_dir() else p.parent
+        path = folder / "metadata.json"
+        if not path.is_file():
+            return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        sys.exit(f"ERROR: Could not read metadata file {path}: {e}")
+    print(f"Loaded metadata for {len(data)} level(s) from {path}")
+    return data
+
+
 def detect_empty_char(tileset_path):
     # Prefer a literal space if the tileset defines one, otherwise fall back
     # to '-' (the VGLC empty-tile glyph).
@@ -365,11 +390,15 @@ def _safe_filename(name):
 
 
 def build_sample_entry(sample_name, x, scene, with_images, Image, level_img, ppt,
-                       image_out_dir, file_stem):
+                       image_out_dir, file_stem, meta=None):
     """Make a dataset entry for one window, cropping and saving the matching
     image slice when --with_images is on. Returns (entry, saved_image) so the
-    caller can keep its own image counter."""
-    entry = {"name": sample_name, "scene": scene}
+    caller can keep its own image counter. `meta` (when present) carries the
+    level's metadata fields, written between the name and the scene."""
+    entry = {"name": sample_name}
+    if meta:
+        entry.update(meta)
+    entry["scene"] = scene
     if not with_images:
         return entry, False
     if level_img is not None and x is not None:
@@ -444,6 +473,14 @@ def main():
     parser.add_argument("--image_search_root", default=None,
                         help="Root directory for the machine-wide PNG search "
                              "fallback. Default: the input drive.")
+    parser.add_argument("--metadata", default=None,
+                        help="Path to the per-level metadata JSON produced by "
+                             "mm2_json_to_ascii.py (keyed by ascii file stem, with "
+                             "level_name/difficulty/gamestyle/theme/tags). Each "
+                             "sample from a level is tagged with its metadata. If "
+                             "omitted, a 'metadata.json' sitting in the input folder "
+                             "(or next to a single input file) is picked up "
+                             "automatically.")
     args = parser.parse_args()
 
     # Push the requested sizes into the module globals before any extraction.
@@ -509,6 +546,7 @@ def main():
             dropped_image_out_dir.mkdir(parents=True, exist_ok=True)
 
     input_files = collect_input_files(args.input_file)
+    level_metadata = load_level_metadata(args.metadata, args.input_file)
     dataset = []
     dataset_dropped = []     # samples rejected by --min_tiles, kept for inspection
     processed = 0
@@ -518,6 +556,7 @@ def main():
     for input_file in input_files:
         raw_levels = parse_source_file(input_file)
         file_stem = input_file.stem
+        file_meta = level_metadata.get(file_stem)
         print(f"Parsing content from {input_file}...")
 
         for name, rows in raw_levels.items():
@@ -624,7 +663,7 @@ def main():
                 for sample_name, x, scene in samples:
                     entry, saved = build_sample_entry(
                         sample_name, x, scene, args.with_images, Image,
-                        level_img, ppt, image_out_dir, file_stem)
+                        level_img, ppt, image_out_dir, file_stem, meta=file_meta)
                     if saved:
                         images_saved += 1
                     dataset.append(entry)
@@ -633,7 +672,7 @@ def main():
                     for sample_name, x, scene in dropped_samples:
                         entry, saved = build_sample_entry(
                             sample_name, x, scene, args.with_images, Image,
-                            level_img, ppt, dropped_image_out_dir, file_stem)
+                            level_img, ppt, dropped_image_out_dir, file_stem, meta=file_meta)
                         if saved:
                             dropped_images_saved += 1
                         dataset_dropped.append(entry)

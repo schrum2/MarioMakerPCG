@@ -69,7 +69,19 @@ python analyze_level_dimensions.py --input "%INPUT%" --output datasets\%GAME%_Le
 if %ERRORLEVEL% neq 0 ( echo ERROR: analyze_level_dimensions.py failed. & exit /b 1 )
 
 echo === Step 1: Preparing dataset with tile-presence captions ===
-python build_dataset_with_ascii.py --input_file "%INPUT%" --output %RAW_OUTPUT% --tileset %TILESET% --sliding_window --stride 20
+REM Fold in the level-metadata sidecar the extract pipeline writes next to the
+REM ascii files (folder input -> INPUT\metadata.json; single file -> its folder),
+REM matching where bat\extract_levels_to_ascii.bat puts it. Passed only when it
+REM exists, so inputs prepared without the extract pipeline still build.
+set "METADATA="
+if exist "%INPUT%\" (
+    set "METADATA=%INPUT%\metadata.json"
+) else (
+    for %%I in ("%INPUT%") do set "METADATA=%%~dpImetadata.json"
+)
+set "META_ARG="
+if defined METADATA if exist "%METADATA%" set "META_ARG=--metadata "%METADATA%""
+python build_dataset_with_ascii.py --input_file "%INPUT%" --output %RAW_OUTPUT% --tileset %TILESET% --sliding_window --stride 20 %META_ARG%
 if %ERRORLEVEL% neq 0 ( echo ERROR: build_dataset_with_ascii.py failed. & exit /b 1 )
 python MarioMaker_create_ascii_captions.py --dataset %RAW_OUTPUT% --tileset %TILESET% --output %CAPTIONED_OUTPUT%
 if %ERRORLEVEL% neq 0 ( echo ERROR: MarioMaker_create_ascii_captions.py failed. & exit /b 1 )

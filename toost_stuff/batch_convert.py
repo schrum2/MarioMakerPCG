@@ -33,30 +33,33 @@ def world_size(json_path):
     except Exception:
         return 0
 
-def load_tags_index(input_dir):
-    # tags.json (from extract_mm2_bcd.py) maps each .bcd stem to its tag list.
-    path = os.path.join(input_dir, "tags.json")
+def load_metadata_index(input_dir):
+    # level_metadata.json (from extract_mm2_bcd.py) maps each .bcd stem to the
+    # server-side fields that aren't in the .bcd payload: {difficulty, tags}.
+    path = os.path.join(input_dir, "level_metadata.json")
     if not os.path.isfile(path):
         return {}
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        print_warn(f"Could not read tags index '{path}': {e}")
+        print_warn(f"Could not read metadata index '{path}': {e}")
         return {}
 
-def attach_tags(json_path, tags):
-    # Toost doesn't know about tags (they aren't in the .bcd), so add them here.
+def attach_metadata(json_path, meta):
+    # Toost doesn't know about tags or difficulty (they aren't in the .bcd), so
+    # fold them into the JSON alongside the fields Toost did decode.
     if not os.path.isfile(json_path):
         return
     try:
         with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
-        data["tags"] = tags
+        data["tags"] = meta.get("tags", [])
+        data["difficulty"] = meta.get("difficulty")
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
     except Exception as e:
-        print_warn(f"Could not attach tags to '{json_path}': {e}")
+        print_warn(f"Could not attach metadata to '{json_path}': {e}")
 
 def batch_convert(exe, input_dir, output_dir, images_dir, min_objects,
                   remove_grid, objects_over_pipes):
@@ -67,10 +70,10 @@ def batch_convert(exe, input_dir, output_dir, images_dir, min_objects,
 
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(images_dir, exist_ok=True)
-    tags_index = load_tags_index(input_dir)
+    metadata_index = load_metadata_index(input_dir)
     print_info(f"Processing {len(bcd_files)} file(s) -> {output_dir} (json) / {images_dir} (images)")
-    if tags_index:
-        print_info(f"Loaded tags for {len(tags_index)} level(s) from tags.json")
+    if metadata_index:
+        print_info(f"Loaded metadata for {len(metadata_index)} level(s) from level_metadata.json")
     print("-" * 60)
 
     ok = skipped = failed = 0
@@ -100,10 +103,10 @@ def batch_convert(exe, input_dir, output_dir, images_dir, min_objects,
             failed += 1
             continue
 
-        # Tags apply to the whole level: overworld always, subworld if kept.
-        tags = tags_index.get(stem)
-        if tags is not None:
-            attach_tags(ow_json, tags)
+        # Metadata applies to the whole level: overworld always, subworld if kept.
+        meta = metadata_index.get(stem)
+        if meta is not None:
+            attach_metadata(ow_json, meta)
 
         # Remove subworld JSON/PNG if it's below the size threshold
         sub_size = world_size(sub_json)
@@ -114,8 +117,8 @@ def batch_convert(exe, input_dir, output_dir, images_dir, min_objects,
             print(f"\033[92mOK\033[0m  \033[93m(subworld skipped: {sub_size} objects)\033[0m")
             skipped += 1
         else:
-            if tags is not None:
-                attach_tags(sub_json, tags)
+            if meta is not None:
+                attach_metadata(sub_json, meta)
             print("\033[92mOK\033[0m")
 
         ok += 1

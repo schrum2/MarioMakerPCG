@@ -442,8 +442,10 @@ def extract_levels(
     skipped_boos = 0
     name_saved = 0
 
-    # filename stem -> tag list, written to tags.json for the conversion step.
-    tags_index = {}
+    # filename stem -> {difficulty, tags}, written to level_metadata.json for the
+    # conversion step. Both are server-side columns that aren't in the .bcd payload
+    # (so Toost can't emit them) and have to be carried forward by hand.
+    metadata_index = {}
 
     for row in ds:
         data_id = row["data_id"]
@@ -520,7 +522,10 @@ def extract_levels(
             filename = f"{data_id}.bcd"
 
         (out / filename).write_bytes(bcd)
-        tags_index[Path(filename).stem] = these_tags
+        metadata_index[Path(filename).stem] = {
+            "difficulty": DIFFICULTY.get(row.get("difficulty"), "Unknown"),
+            "tags": these_tags,
+        }
         saved += 1
 
         if name_filter is not None and name_count is not None:
@@ -533,8 +538,8 @@ def extract_levels(
         if limit is not None and saved >= limit:
             break
 
-    (out / "tags.json").write_text(
-        json.dumps(tags_index, indent=2, ensure_ascii=False), encoding="utf-8"
+    (out / "level_metadata.json").write_text(
+        json.dumps(metadata_index, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
     print(
@@ -545,7 +550,7 @@ def extract_levels(
         f"Errors: {errors}"
     )
     print(f"Output dir: {out.resolve()}")
-    print(f"Wrote tags for {len(tags_index)} level(s) -> {(out / 'tags.json').resolve()}")
+    print(f"Wrote metadata for {len(metadata_index)} level(s) -> {(out / 'level_metadata.json').resolve()}")
 
 
 # ---------------------------------------------------------------------------
