@@ -397,7 +397,7 @@ GENERIC_TILE_TAGS = frozenset({
     "passable", "solid", "empty", "enemy", "damaging", "hazard", "moving",
     "flying", "boss", "explosive", "projectile", "falling", "slippery",
     "togglable", "collectable", "power-up", "platform", "vehicle",
-    "style ride", "style power-up", "interactive", "climbable", "shooter",
+    "style ride", "interactive", "climbable", "shooter",
     "warp", "decoration", "spawn",
 })
 

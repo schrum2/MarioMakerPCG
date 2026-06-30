@@ -8,7 +8,7 @@ import argparse
 PROPERTY_TAGS = {
     "passable", "solid", "empty", "air", "breakable", "collectable", "enemy",
     "damaging", "hazard", "moving", "flying", "projectile", "explosive",
-    "shooter", "power-up", "style power-up", "style ride", "platform",
+    "shooter", "power-up", "style ride", "platform",
     "interactive", "climbable", "togglable", "slippery", "falling", "warp",
     "door", "vehicle",
 }
