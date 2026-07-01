@@ -37,6 +37,7 @@ MegaManState = mm.MegaManState
 # Default tileset per game (the one each dataset is normally created with).
 DEFAULT_TILESETS = {
     "Mario": common_settings.MARIO_TILESET,
+    "MM2": common_settings.MM2_TILESET,     # Mario Maker 2 (same tileset as Mario here)
     "LR": common_settings.LR_TILESET,
     "MM": common_settings.MM_SIMPLE_TILESET,
 }
@@ -294,7 +295,9 @@ def evaluate(game, scene, id_to_char, descs, budget, allow_weird, visualize=Fals
 
     spawn/orb are MM-only optional (x, y) cells used as the start and goal; they are
     ignored for Mario and LR."""
-    if game == "Mario":
+    if game in ("Mario", "MM2"):
+        # MM2 (Mario Maker 2) reuses the Mario platformer model and its right-edge goal;
+        # only the render target differs (MM2 sprites vs SMB), handled by _render_target.
         return mario_traversable(scene, id_to_char, descs, budget, visualize=visualize)
     if game == "LR":
         return lr_traversable(scene, id_to_char, descs, budget,
@@ -332,7 +335,7 @@ def _render_target(game, tileset_path):
 
 # Render-style game names (as used by run_diffusion and the GUIs) -> the game names
 # evaluate() understands. The render name itself doubles as visualize_path's target.
-RENDER_GAME_TO_TRAV = {"Mario": "Mario", "LR": "LR",
+RENDER_GAME_TO_TRAV = {"Mario": "Mario", "MM2": "MM2", "LR": "LR",
                        "MM-Simple": "MM", "MM-Full": "MM"}
 
 
@@ -363,8 +366,9 @@ def main():
     parser = argparse.ArgumentParser(description="Determine Level Traversability")
     parser.add_argument('--level_json', type=str, required=True,
                         help="Path to the JSON file containing the level(s) to evaluate")
-    parser.add_argument('--game', type=str, required=True, choices=["Mario", "LR", "MM"],
-                        help="The game the level belongs to; determines how traversability is measured")
+    parser.add_argument('--game', type=str, required=True, choices=["Mario", "MM2", "LR", "MM"],
+                        help="The game the level belongs to; determines how traversability is measured. "
+                             "MM2 = Mario Maker 2 (same right-edge model as Mario, but renders MM2 sprites)")
     parser.add_argument('--tileset', type=str, default=None,
                         help="Tileset JSON used to encode the scenes (defaults to the game's standard tileset)")
     parser.add_argument('--budget', type=int, default=100000,
