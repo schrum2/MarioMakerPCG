@@ -50,7 +50,19 @@ if %ERRORLEVEL% neq 0 (
 
 REM -- Pipeline ---------------------------------------------------------------
 python analyze_level_dimensions.py --input "%INPUT%" --output datasets\%GAME%_LevelSizeDistribution-%TYPE%.png --csv datasets\%GAME%_LevelSizeDistribution-%TYPE%.csv --title "%GAME% complete level size distribution (%TYPE%)"
-python build_dataset_with_ascii.py --input_file %INPUT% --output %RAW_OUTPUT% --tileset %TILESET% --sliding_window --stride 20
+REM Fold in the level-metadata sidecar the extract pipeline writes next to the
+REM ascii files (folder input -> INPUT\metadata.json; single file -> its folder),
+REM matching where bat\extract_levels_to_ascii.bat puts it. Passed only when it
+REM exists, so inputs prepared without the extract pipeline still build.
+set "METADATA="
+if exist "%INPUT%\" (
+    set "METADATA=%INPUT%\metadata.json"
+) else (
+    for %%I in ("%INPUT%") do set "METADATA=%%~dpImetadata.json"
+)
+set "META_ARG="
+if defined METADATA if exist "%METADATA%" set "META_ARG=--metadata "%METADATA%""
+python build_dataset_with_ascii.py --input_file %INPUT% --output %RAW_OUTPUT% --tileset %TILESET% --sliding_window --stride 20 %META_ARG%
 python MarioMaker_llm_captions.py --dataset %RAW_OUTPUT% --tileset %TILESET% --output %CAPTIONED_OUTPUT% --model %MODEL% --grid-format tokens --tileset-we mm2_tileset_we.json --ascii-output-dir "%LLM_ASCII_DIR%" --num-captions 1 --prompt-log MM2_Prompt.txt
 python split_mario_maker_data.py --json %CAPTIONED_OUTPUT% --seed %SEED%
 python tokenizer.py save --json_file datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --pkl_file datasets\%GAME%_Tokenizer-%TYPE%.pkl

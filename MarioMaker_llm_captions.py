@@ -141,12 +141,11 @@ MM2_CHAR_NAMES = {
     "i": "Fire Flower",
     "\xa4": "Super Star",
     "M": "Super Mushroom",
-    # Style Power-up slots A/B: gamestyle-dependent (Super Leaf/Cape Feather/
-    # Propeller Mushroom, Frog Suit/Power Balloon/Super Acorn); scenes carry
-    # no gamestyle, so the SMB1 names are used here as a baseline. See
-    # mm2_json_field_dictionary.txt §5.
+    # Style Power-up slot A: gamestyle-dependent (Super Leaf/Cape Feather/
+    # Propeller Mushroom); scenes carry no gamestyle, so the SMB1 name is used
+    # here as a baseline. See mm2_json_field_dictionary.txt §5. (The id-81 SMB2
+    # Mushroom slot is dropped at extraction, so it has no glyph here.)
     "\xb6": "Big Mushroom",
-    "\xa7": "SMB2 Mushroom",
     "\xac": "Super Hammer",
     "\xa6": "P Switch",
     "\xaf": "POW Block",
@@ -398,7 +397,7 @@ GENERIC_TILE_TAGS = frozenset({
     "passable", "solid", "empty", "enemy", "damaging", "hazard", "moving",
     "flying", "boss", "explosive", "projectile", "falling", "slippery",
     "togglable", "collectable", "power-up", "platform", "vehicle",
-    "style ride", "style power-up", "interactive", "climbable", "shooter",
+    "style ride", "interactive", "climbable", "shooter",
     "warp", "decoration", "spawn",
 })
 
@@ -1358,6 +1357,13 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
             entry["image"] = image_rel
         for idx, cap in enumerate(captions):
             entry["caption" if idx == 0 else f"caption{idx}"] = cap
+        # Record which model/backend produced these captions, inline per entry
+        # (the output stays a flat JSON array, so a top-level metadata block would
+        # break load_existing/split_dataset_into_n). The deterministic 'prompt'
+        # caption is appended above but isn't model-generated, so this provenance
+        # only ever describes the LLM captions.
+        entry["caption_model"] = model
+        entry["caption_backend"] = backend
         if deterministic:
             entry["prompt"] = deterministic
         results.append(entry)
@@ -1368,7 +1374,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
     _write(output_path, results)
     print(
-        f"\nDone. Generated {generated} new captions, "
+        f"\nDone. Generated {generated} new captions with {backend}/{model}, "
         f"{skipped} resumed, {errors} errors -> {output_path}"
     )
 

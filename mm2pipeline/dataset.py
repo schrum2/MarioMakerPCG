@@ -319,7 +319,7 @@ def main_build(argv=None):
     print(f"\nCompleted! Packaged {processed} items into {output_file} ({skipped} skipped).")
 
 # num_tiles = 138 for mm2_tileset_full
-# num_tiles = 69 for mm2_tileset_we
+# num_tiles = 68 for mm2_tileset_we
 
 
 # ===========================================================================

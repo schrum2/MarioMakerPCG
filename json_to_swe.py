@@ -95,6 +95,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from mm2_ascii_to_json import repair_semisolid_cells
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -1099,6 +1101,39 @@ def build_cannons(objects, occ):
     return out
 
 
+def repair_semisolid_objects(objects, ground):
+    """Repair broken Semisolid Platform (id 16) objects into clean boxes.
+
+    The diffusion model emits semisolids as scattered 1x1 / ragged fragments;
+    mm2_ascii_to_json already repairs that on the ASCII -> JSON path, but a JSON
+    that still carries the breakage (e.g. one produced before the fix) must be
+    repaired here too on the way to .swe, or build_platform_objects emits a swarm
+    of 1x1 S7 platforms.
+
+    Each id-16 object is repaired INDEPENDENTLY (expanded to its tile cells, then
+    widened to the 3-tile minimum and dragged down to rest on `ground`) -- objects
+    are never merged with each other, so platforms whose caps sit at different
+    heights stay separate, and the pass is idempotent (a clean box already resting
+    on ground round-trips unchanged). All other objects pass through untouched."""
+    ground_cells = {(g.get("x"), g.get("y")) for g in ground}
+    rest = []
+    for o in objects:
+        if o.get("id") != 16:
+            rest.append(o)
+            continue
+        col, row = object_cell(o)
+        w = max(1, o.get("w", 1))
+        h = max(1, o.get("h", 1))
+        cells = {(col + dx, row + dy) for dx in range(w) for dy in range(h)}
+        for c0, r0, bw, bh in repair_semisolid_cells(cells, ground_cells):
+            # id-16 is left-anchored in SWE (object_cell: col = x // SUBPX), so x
+            # is the left tile's sub-pixel origin and y the bottom row's.
+            rest.append({"id": 16, "name": "Semisolid Platform",
+                         "x": c0 * SUBPX, "y": r0 * SUBPX, "w": bw, "h": bh,
+                         "flag": 0, "cflag": 0})
+    return rest
+
+
 def build_platform_objects(objects, *, gamestyle, theme):
     """MM2 Bullet Bill Blaster (13) / Semisolid Platform (16) / Seesaw (91) /
     Bridge (17) / Castle Bridge (49, approx) / Mushroom Platform (14)
@@ -1248,7 +1283,7 @@ def build_metadata(j, *, user, name, desc, date_str, time_str):
 
 def build_world(j, *, user, name, desc, date_str, time_str):
     """Build a full SWE world dict (S0 or a populated SB1) from one map JSON."""
-    objects = j.get("objects", [])
+    objects = repair_semisolid_objects(j.get("objects", []), j.get("ground", []))
     gamestyle = GAMESTYLE_MAP.get(j.get("gamestyle_raw", 0), 3)
     theme = THEME_MAP.get(j.get("theme_raw", 0), "overworld")
     s5, consumed_plants = build_pipes(objects)

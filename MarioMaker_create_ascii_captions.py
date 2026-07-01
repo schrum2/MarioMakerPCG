@@ -8,13 +8,39 @@ import argparse
 PROPERTY_TAGS = {
     "passable", "solid", "empty", "air", "breakable", "collectable", "enemy",
     "damaging", "hazard", "moving", "flying", "projectile", "explosive",
-    "shooter", "power-up", "style power-up", "style ride", "platform",
+    "shooter", "power-up", "style ride", "platform",
     "interactive", "climbable", "togglable", "slippery", "falling", "warp",
     "door", "vehicle",
 }
 
 # Tiles that represent empty space and should never appear in a caption.
 EMPTY_TAGS = {"empty", "air"}
+
+# Per-level metadata fields (folded into each dataset entry by
+# build_dataset_with_ascii.py from the export's metadata.json) that get added to
+# the caption, paired with the word that turns the raw value into a phrase.
+# level_name is intentionally left out: it names the source level, not anything
+# about its contents.
+CAPTION_METADATA_FIELDS = [
+    ("gamestyle", "style"),
+    ("theme", "theme"),
+    ("difficulty", "difficulty"),
+]
+
+
+def metadata_phrases(item):
+    """Build caption phrases from an item's level metadata. Skips missing/empty
+    values, the "Unknown" difficulty placeholder, and the "None" tag slot."""
+    phrases = []
+    for field, suffix in CAPTION_METADATA_FIELDS:
+        value = item.get(field)
+        if value in (None, "") or str(value).lower() == "unknown":
+            continue
+        phrases.append(f"{value} {suffix}")
+    for tag in item.get("tags") or []:
+        if tag and str(tag).lower() != "none":
+            phrases.append(str(tag))
+    return phrases
 
 
 def build_id_to_char(tileset_path):
@@ -51,9 +77,12 @@ def get_char_names(tileset_path):
     return char_names
 
 
-def assign_caption(scene, id_to_char, char_names):
+def assign_caption(scene, id_to_char, char_names, meta_phrases=None):
+    # Metadata phrases lead the caption, followed by the tiles present in the
+    # scene. Both are written as period-terminated phrases (e.g. "SMB1 style.
+    # Coin. Ground.").
+    phrases = list(meta_phrases) if meta_phrases else []
     seen = set()
-    names = []
     for row in scene:
         for tile_id in row:
             char = id_to_char.get(tile_id)
@@ -62,8 +91,8 @@ def assign_caption(scene, id_to_char, char_names):
             name = char_names.get(char)
             if name and name not in seen:
                 seen.add(name)
-                names.append(name)
-    return " ".join(f"{n}." for n in names)
+                phrases.append(name)
+    return " ".join(f"{p}." for p in phrases)
 
 
 def generate_captions(dataset_path, tileset_path, output_path):
@@ -75,8 +104,10 @@ def generate_captions(dataset_path, tileset_path, output_path):
 
     captioned = []
     for item in dataset:
-        scene = item["scene"] if isinstance(item, dict) else item
-        caption = assign_caption(scene, id_to_char, char_names)
+        is_dict = isinstance(item, dict)
+        scene = item["scene"] if is_dict else item
+        meta_phrases = metadata_phrases(item) if is_dict else []
+        caption = assign_caption(scene, id_to_char, char_names, meta_phrases)
         entry = {"scene": scene, "caption": caption}
         if isinstance(item, dict):
             if "name" in item:

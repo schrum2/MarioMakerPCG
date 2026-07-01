@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 mm2view_to_extended.py
-Collapse a Mario Maker 2 ASCII level from the full 69-tile mm2_tileset_we vocab
+Collapse a Mario Maker 2 ASCII level from the full 68-tile mm2_tileset_we vocab
 down to a smaller "extended" tileset, so diffusion training isn't spread thin over
 dozens of near-empty tile classes.
 

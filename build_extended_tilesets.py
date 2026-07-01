@@ -3,14 +3,8 @@
 build_extended_tilesets.py
 ==========================
 Generate the frequency-ranked "extended" tilesets (20/30/40/50/60 tiles) used by
-mm2view_to_extended.py to shrink the 69-tile mm2_tileset_we vocabulary down to the
+mm2view_to_extended.py to shrink the 68-tile mm2_tileset_we vocabulary down to the
 handful of tiles that actually carry the dataset.
-
-The idea is simple: a diffusion model that has to learn 69 near-empty tile classes
-wastes most of its capacity on tiles that appear a fraction of a percent of the
-time. So we walk the real tile-frequency distribution from most to least common,
-keep the first N distinct tiles, and let the converter fold everything rarer onto
-its closest survivor (see mm2view_to_extended.py for the tag-based replacement).
 
 FREQUENCY_ORDER below is the tile_counts ordering straight out of
 MM_Levels-regular_tile_distribution.json (descending). Each name is also a tag in
@@ -32,8 +26,7 @@ SIZES = [20, 30, 40, 50, 60]
 
 # Tile names in descending frequency order, copied from the tile_counts block of
 # MM_Levels-regular_tile_distribution.json. Walk this list, keep the first N
-# distinct glyphs -> that's the N-tile tileset. "style power-up" shares the glyph
-# "E" with "propeller mushroom" (which ranks higher), so it never adds a new tile.
+# distinct glyphs -> that's the N-tile tileset.
 FREQUENCY_ORDER = [
     "air", "ground", "semisolid", "hard block", "coin", "brick", "pipe", "spikes",
     "mushroom platform", "flagpole", "dotted line block", "goomba", "question block",
@@ -43,18 +36,17 @@ FREQUENCY_ORDER = [
     "cheep cheep", "bowser", "lava bubble", "boom boom", "mushroom", "one up",
     "fire flower", "checkpoint flag", "spring", "clown car", "on off block",
     "hammer bro", "buzzy beetle", "burner", "cannon", "dry bones", "fire bar", "star",
-    "propeller mushroom", "bob-omb", "chain chomp", "boo", "monty mole",
+    "style power-up", "bob-omb", "chain chomp", "boo", "monty mole",
     "goomba's shoe", "wiggler", "blooper", "angry sun", "twister", "p switch",
     "lava lift", "magikoopa", "bowser jr.", "rocky wrench", "lakitu", "pow",
-    "style power-up",
 ]
 
 
 def name_to_glyph(tiles):
     """Map each tile name (a tag) to the glyph that carries it.
 
-    A glyph can carry several names (e.g. "E" is both propeller mushroom and the
-    generic style power-up); the first name wins so the lookup is 1:1 per name."""
+    A glyph can carry several names (e.g. a power-up glyph is both "power-up" and
+    "style power-up"); the first name wins so the lookup is 1:1 per name."""
     lookup = {}
     for glyph, tags in tiles.items():
         for tag in tags:

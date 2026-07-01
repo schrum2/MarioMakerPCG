@@ -4,13 +4,14 @@ build_dataset_with_ascii.py
 ===========================
 Build a scene dataset from text files where each level is introduced by a
 "(source_num)" header line and the rows below it are the ASCII map. Lines of
-"{{{"/"}}}" separators are ignored. Each level is cropped to a 20x20 window
+"{{{"/"}}}" separators are ignored. Each level is cropped to a HxW window
 (best window by tile count, or every window with --sliding_window) and emitted
 as a grid of tile ids.
 """
 
 import argparse
 import json
+import math
 import os
 import sys
 import re
@@ -142,6 +143,18 @@ def extract_all_windows(rows, tile_to_id, extra_tile=EXTRA_TILE, stride=1, empty
 
     return scenes
 
+def count_non_air_tiles(scene, empty_id, extra_id):
+    """Number of "real" tiles in a window -- everything that isn't the empty
+    (sky) tile or the unknown/padding tile. Used to throw out samples that are
+    mostly air and carry too little structure to be worth training on."""
+    return sum(
+        1
+        for row in scene
+        for tid in row
+        if tid not in (empty_id, extra_id)
+    )
+
+
 def parse_source_file(file_path):
     """
     Split a file into per-level row lists keyed by their "(source_num)" header,
@@ -223,12 +236,47 @@ def collect_input_files(input_path):
         return [p]
     sys.exit(f"ERROR: Input path not found: {input_path}")
 
+def load_level_metadata(metadata_arg, input_path):
+    """Load the per-level metadata map (ascii stem -> {level_name, difficulty,
+    gamestyle, theme, tags}) written by mm2_json_to_ascii.py. Uses the explicit
+    --metadata path when given; otherwise looks for a 'metadata.json' sitting in
+    the input folder (or beside a single input file) so the export pipeline's
+    sidecar is picked up automatically. Returns {} when there's nothing to load."""
+    if metadata_arg:
+        path = Path(metadata_arg)
+        if not path.is_file():
+            sys.exit(f"ERROR: Metadata file not found at {metadata_arg}")
+    else:
+        p = Path(input_path)
+        folder = p if p.is_dir() else p.parent
+        path = folder / "metadata.json"
+        if not path.is_file():
+            return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        sys.exit(f"ERROR: Could not read metadata file {path}: {e}")
+    print(f"Loaded metadata for {len(data)} level(s) from {path}")
+    return data
+
+
 def detect_empty_char(tileset_path):
     # Prefer a literal space if the tileset defines one, otherwise fall back
     # to '-' (the VGLC empty-tile glyph).
     with open(tileset_path, encoding="utf-8") as f:
         tiles = json.load(f)["tiles"]
     return " " if " " in tiles else "-"
+
+
+def detect_goal_chars(tileset_path):
+    # Characters the tileset tags as the level goal/flagpole. Falls back to the
+    # native MM2 glyph 'G' when the tileset carries no goal tag (e.g. the
+    # smb/extended tilesets), so --strip_goal still works on raw MM2 input.
+    with open(tileset_path, encoding="utf-8") as f:
+        tiles = json.load(f)["tiles"]
+    goal = {ch for ch, tags in tiles.items() if "goal" in tags or "flagpole" in tags}
+    return goal or {"G"}
 
 
 def load_converter(filename, module_name):
@@ -341,7 +389,41 @@ def _safe_filename(name):
     return re.sub(r'[^A-Za-z0-9._-]', '_', name)
 
 
+def build_sample_entry(sample_name, x, scene, with_images, Image, level_img, ppt,
+                       image_out_dir, file_stem, meta=None):
+    """Make a dataset entry for one window, cropping and saving the matching
+    image slice when --with_images is on. Returns (entry, saved_image) so the
+    caller can keep its own image counter. `meta` (when present) carries the
+    level's metadata fields, written between the name and the scene."""
+    entry = {"name": sample_name}
+    if meta:
+        entry.update(meta)
+    entry["scene"] = scene
+    if not with_images:
+        return entry, False
+    if level_img is not None and x is not None:
+        crop = crop_image_window(Image, level_img, x, ppt)
+        # Always prefix the crop filename with the level (source file) name so
+        # images are identifiable and never collide across levels. For multi-file
+        # input sample_name already carries the stem ("stem/...").
+        if sample_name.startswith(f"{file_stem}_") or sample_name.startswith(f"{file_stem}/"):
+            img_stem = sample_name
+        else:
+            img_stem = f"{file_stem}_{sample_name}"
+        crop_path = image_out_dir / f"{_safe_filename(img_stem)}.png"
+        crop.save(crop_path)
+        # Store the exact (absolute) path so the dataset opens from any cwd.
+        entry["image"] = str(crop_path.resolve())
+        return entry, True
+    entry["image"] = None
+    return entry, False
+
+
 def main():
+    # The window dimensions are read as module globals throughout; declare them
+    # global up front so --window_h/--window_w can push the requested sizes back.
+    global WINDOW_H, WINDOW_W
+
     parser = argparse.ArgumentParser(description="Build dataset from custom tagged text files.")
     parser.add_argument("--input_file", required=True, help="Path to a .txt file or a folder of .txt files.")
     parser.add_argument("--output", required=True, help="Output JSON filename.")
@@ -351,10 +433,28 @@ def main():
                                help="Convert layout to VGLC structure (ascii_to_vglc.py).")
     convert_group.add_argument("--convert_to_extended", action="store_true",
                                help="Convert layout to extended tile format (mm2view_to_extended.py).")
+    parser.add_argument("--window_h", type=int, default=WINDOW_H,
+                        help=f"Window height in tiles. Default: {WINDOW_H}.")
+    parser.add_argument("--window_w", type=int, default=WINDOW_W,
+                        help=f"Window width in tiles. Default: {WINDOW_W}.")
     parser.add_argument("--sliding_window", action="store_true",
                         help="Collect every window position as a separate sample instead of keeping only the best window.")
-    parser.add_argument("--stride", type=int, default=WINDOW_W,
-                        help=f"Step size (in tiles) between windows when --sliding_window is active. Default: {WINDOW_W} (window width, no overlap).")
+    parser.add_argument("--stride", type=int, default=None,
+                        help="Step size (in tiles) between windows when --sliding_window is active. Default: the window width (no overlap).")
+    parser.add_argument("--strip_goal", action="store_true",
+                        help="Replace the goal/flagpole tile with air (the empty "
+                             "tile) before windowing, so levels are encoded without "
+                             "their end goal.")
+    parser.add_argument("--min_tiles_pct", type=float, default=7.0,
+                        help="Drop samples where non-air tiles (sky and unknown "
+                             "tiles don't count) make up less than this percent of "
+                             "the window. Default: 7 (i.e. 7%%).")
+    parser.add_argument("--dropped_output", default=None,
+                        help="Where to write a second dataset holding the samples "
+                             "rejected by --min_tiles_pct. Default: '<output>_dropped.json'. "
+                             "Pass --no_dropped to skip writing it.")
+    parser.add_argument("--no_dropped", action="store_true",
+                        help="Don't write the 'dropped' dataset of below-min_tiles_pct samples.")
     parser.add_argument("--with_images", action="store_true",
                         help="For every tile sample, also crop the matching "
                              f"{WINDOW_W}x{WINDOW_H}-tile region out of the level's "
@@ -373,7 +473,23 @@ def main():
     parser.add_argument("--image_search_root", default=None,
                         help="Root directory for the machine-wide PNG search "
                              "fallback. Default: the input drive.")
+    parser.add_argument("--metadata", default=None,
+                        help="Path to the per-level metadata JSON produced by "
+                             "mm2_json_to_ascii.py (keyed by ascii file stem, with "
+                             "level_name/difficulty/gamestyle/theme/tags). Each "
+                             "sample from a level is tagged with its metadata. If "
+                             "omitted, a 'metadata.json' sitting in the input folder "
+                             "(or next to a single input file) is picked up "
+                             "automatically.")
     args = parser.parse_args()
+
+    # Push the requested sizes into the module globals before any extraction.
+    WINDOW_H = args.window_h
+    WINDOW_W = args.window_w
+    # Default stride is the window width (no overlap), tracking --window_w.
+    stride = args.stride if args.stride is not None else WINDOW_W
+    # Convert the percentage threshold into a tile count against the actual window size.
+    min_tiles = math.ceil((args.min_tiles_pct / 100.0) * WINDOW_H * WINDOW_W)
 
     if args.with_images and (args.convert_to_vglc or args.convert_to_extended):
         parser.error("--with_images cannot be combined with --convert_to_vglc / "
@@ -388,6 +504,7 @@ def main():
     tile_to_id, extra_tile = load_tileset(tileset_path)
 
     default_empty_char = detect_empty_char(tileset_path)
+    goal_chars = detect_goal_chars(tileset_path) if args.strip_goal else set()
 
     converter_mod = None
     if args.convert_to_vglc:
@@ -399,11 +516,15 @@ def main():
         # converter's default extended_tiles.json.
         converter_mod.set_target(tileset_path)
 
+    keep_dropped = not args.no_dropped
+
     # --with_images setup: locate the rendered PNGs and a place to write crops.
     Image = None
     locator = None
     image_out_dir = None
+    dropped_image_out_dir = None
     images_saved = 0
+    dropped_images_saved = 0
     images_missing = 0
     if args.with_images:
         Image = _load_pil()
@@ -418,15 +539,24 @@ def main():
             out = Path(args.output)
             image_out_dir = out.parent / f"{out.stem}_images"
         image_out_dir.mkdir(parents=True, exist_ok=True)
+        # Crops for the dropped dataset go in a parallel sibling folder so they
+        # never get mixed in with the real samples.
+        if keep_dropped:
+            dropped_image_out_dir = image_out_dir.parent / f"{image_out_dir.name}_dropped"
+            dropped_image_out_dir.mkdir(parents=True, exist_ok=True)
 
     input_files = collect_input_files(args.input_file)
+    level_metadata = load_level_metadata(args.metadata, args.input_file)
     dataset = []
+    dataset_dropped = []     # samples rejected by --min_tiles, kept for inspection
     processed = 0
     skipped = 0
+    dropped_min_samples = 0  # samples set aside for being under --min_tiles
 
     for input_file in input_files:
         raw_levels = parse_source_file(input_file)
         file_stem = input_file.stem
+        file_meta = level_metadata.get(file_stem)
         print(f"Parsing content from {input_file}...")
 
         for name, rows in raw_levels.items():
@@ -464,6 +594,13 @@ def main():
                             print(f"  [no-image] {full_name}: no level image found "
                                   f"on this machine; sample(s) kept without an image crop.")
 
+                # Wipe the goal/flagpole tile to air so the level trains without
+                # its end goal. Done after any conversion so we match the glyphs
+                # actually in `rows`, and after empty_char is known.
+                if goal_chars:
+                    table = str.maketrans({g: empty_char for g in goal_chars})
+                    rows = [r.translate(table) for r in rows]
+
                 total_chars, unmapped_chars_count, unmapped_chars = check_unmapped_chars(rows, tile_to_id, extra_tile)
                 if total_chars and unmapped_chars_count / total_chars > 0.2:
                     print(
@@ -474,47 +611,71 @@ def main():
                         f"You are probably using the wrong --tileset for this input."
                     )
 
-                # Collect the windows to emit as (sample_name, x, scene), where x
-                # is the left-edge column used to crop the matching image slice.
+                # Ids that count as "air" for the min-tile filter: sky (empty)
+                # and the unknown/padding tile.
+                empty_id = tile_to_id.get(empty_char, 0)
+                extra_id = tile_to_id.get(extra_tile, 0)
+
+                # Collect both the windows we keep (samples) and the ones the
+                # min-tile filter rejects (dropped_samples), each as
+                # (sample_name, x, scene) where x is the left-edge column used to
+                # crop the matching image slice.
+                samples = []
+                dropped_samples = []
                 if args.sliding_window:
-                    windows = extract_all_windows(rows, tile_to_id, extra_tile=extra_tile, stride=args.stride, empty_char=empty_char)
+                    windows = extract_all_windows(rows, tile_to_id, extra_tile=extra_tile, stride=stride, empty_char=empty_char)
                     if not windows:
                         print(f"  [SKIP] {full_name} (empty)")
                         skipped += 1
+                        if level_img is not None:
+                            level_img.close()
                         continue
-                    samples = [(f"{full_name}_{i}", x, scene) for i, (x, scene) in enumerate(windows)]
-                    print(f"  [OK] {full_name} ({len(samples)} windows)")
+                    # Split the windows: enough non-air tiles -> keep, otherwise
+                    # set aside for the dropped dataset.
+                    kept = []
+                    dropped_windows = []
+                    for x, scene in windows:
+                        if count_non_air_tiles(scene, empty_id, extra_id) >= min_tiles:
+                            kept.append((x, scene))
+                        else:
+                            dropped_windows.append((x, scene))
+                    dropped_min_samples += len(dropped_windows)
+                    dropped_samples = [(f"{full_name}_{i}", x, scene) for i, (x, scene) in enumerate(dropped_windows)]
+                    samples = [(f"{full_name}_{i}", x, scene) for i, (x, scene) in enumerate(kept)]
+                    suffix = f", {len(dropped_windows)} under {min_tiles} tiles dropped" if dropped_windows else ""
+                    print(f"  [OK] {full_name} ({len(samples)} windows{suffix})")
                 else:
                     scene, best_x = extract_best_window(rows, tile_to_id, extra_tile=extra_tile, empty_char=empty_char)
                     if scene is None:
                         print(f"  [SKIP] {full_name} (empty)")
                         skipped += 1
+                        if level_img is not None:
+                            level_img.close()
                         continue
-                    samples = [(full_name, best_x, scene)]
-                    print(f"  [OK] {full_name}")
+                    if count_non_air_tiles(scene, empty_id, extra_id) < min_tiles:
+                        print(f"  [OK] {full_name} (under {min_tiles} tiles, dropped)")
+                        dropped_min_samples += 1
+                        dropped_samples = [(full_name, best_x, scene)]
+                    else:
+                        samples = [(full_name, best_x, scene)]
+                        print(f"  [OK] {full_name}")
 
                 for sample_name, x, scene in samples:
-                    entry = {"name": sample_name, "scene": scene}
-                    if args.with_images:
-                        if level_img is not None and x is not None:
-                            crop = crop_image_window(Image, level_img, x, ppt)
-                            # Always prefix the crop filename with the level
-                            # (source file) name so images are identifiable and
-                            # never collide across levels. For multi-file input
-                            # sample_name already carries the stem ("stem/...").
-                            if sample_name.startswith(f"{file_stem}_") or sample_name.startswith(f"{file_stem}/"):
-                                img_stem = sample_name
-                            else:
-                                img_stem = f"{file_stem}_{sample_name}"
-                            crop_path = image_out_dir / f"{_safe_filename(img_stem)}.png"
-                            crop.save(crop_path)
-                            # Store the exact (absolute) path to the crop so the
-                            # dataset can be opened from any working directory.
-                            entry["image"] = str(crop_path.resolve())
-                            images_saved += 1
-                        else:
-                            entry["image"] = None
+                    entry, saved = build_sample_entry(
+                        sample_name, x, scene, args.with_images, Image,
+                        level_img, ppt, image_out_dir, file_stem, meta=file_meta)
+                    if saved:
+                        images_saved += 1
                     dataset.append(entry)
+
+                if keep_dropped:
+                    for sample_name, x, scene in dropped_samples:
+                        entry, saved = build_sample_entry(
+                            sample_name, x, scene, args.with_images, Image,
+                            level_img, ppt, dropped_image_out_dir, file_stem, meta=file_meta)
+                        if saved:
+                            dropped_images_saved += 1
+                        dataset_dropped.append(entry)
 
                 processed += len(samples)
                 if level_img is not None:
@@ -530,13 +691,31 @@ def main():
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(dataset, f, indent=2)
 
+    # Save the companion "dropped" dataset of below-min_tiles_pct samples.
+    dropped_file = None
+    if keep_dropped:
+        if args.dropped_output:
+            dropped_file = Path(args.dropped_output)
+        else:
+            dropped_file = output_file.parent / f"{output_file.stem}_dropped{output_file.suffix}"
+        dropped_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(dropped_file, "w", encoding="utf-8") as f:
+            json.dump(dataset_dropped, f, indent=2)
+
     print(f"\nCompleted! Packaged {processed} items into {output_file} ({skipped} skipped).")
+    if dropped_min_samples:
+        print(f"Dropped for --min_tiles_pct ({args.min_tiles_pct:g}%, "
+              f"{min_tiles} tiles): {dropped_min_samples} sample(s).")
+    if keep_dropped:
+        print(f"Dropped dataset: {len(dataset_dropped)} sample(s) written to {dropped_file}.")
     if args.with_images:
         print(f"Image crops: {images_saved} saved to {image_out_dir} "
               f"({images_missing} level(s) had no image on this machine).")
+        if keep_dropped:
+            print(f"Dropped image crops: {dropped_images_saved} saved to {dropped_image_out_dir}.")
 
 if __name__ == "__main__":
     main()
 
 #num_tiles = 138 for mm2_tileset_full
-#num_tiles = 69 for mm2_tileset_we
+#num_tiles = 68 for mm2_tileset_we

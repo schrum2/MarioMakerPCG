@@ -290,11 +290,7 @@
             "passable",
             "collectable",
             "power-up",
-            "style power-up",
-            "big mushroom",
-            "super leaf",
-            "cape feather",
-            "propeller mushroom"
+            "style power-up"
         ],
         "o": [
             "enemy",

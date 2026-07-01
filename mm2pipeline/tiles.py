@@ -135,16 +135,10 @@ OBJ_META = {
     "Super Star":          ("*", "#FFFF00", CAT_ITEM),
     "Super Mushroom":      ("M", "#EE2222", CAT_ITEM),
     "Big Mushroom":        ("E", "#CC1111", CAT_ITEM),
-    "SMB2 Mushroom":       ("Q", "#884488", CAT_ITEM),
     # Style Power-up A (id 44) gamestyle variants — see resolve_obj_name()
     "Super Leaf":          ("E", "#CC1111", CAT_ITEM),
     "Cape Feather":        ("E", "#CC1111", CAT_ITEM),
     "Propeller Mushroom":  ("E", "#CC1111", CAT_ITEM),
-    # Style Power-up B (id 81) gamestyle variants — see resolve_obj_name()
-    "Link":                ("Q", "#884488", CAT_ITEM),
-    "Frog Suit":           ("Q", "#884488", CAT_ITEM),
-    "Power Balloon":       ("Q", "#884488", CAT_ITEM),
-    "Super Acorn":         ("Q", "#884488", CAT_ITEM),
     "Super Hammer":        ("¬", "#996622", CAT_ITEM),
     "Big Coin":            ("£", "#FFAA00", CAT_ITEM),
     "P Switch":            ("S", "#4488FF", CAT_ITEM),
@@ -249,14 +243,85 @@ ASCII_REPLACEMENTS = {
     "Half-Collision Platform": "k",  # → Semisolid platform
     "Spike Ball":              "^",  # → Spikes
     "Icicle":                  "^",  # → Spikes (falling hazard)
+
+    # The remaining objects whose OBJ_META glyph is a leftover from the older,
+    # larger glyph set and isn't in mm2_tileset_we.json. Without an entry here
+    # they leak that raw glyph into the ASCII which then
+    # collapses to the unknown tile at training time. _check_tileset_coverage()
+    # below enforces that every drawable object lands on a real tileset glyph.
+    # Note a lot of these are already filtered out with extracting the levels.
+    # terrain / blocks
+    "Donut":                   "d",  # → Donut Block (same falling platform)
+    "Blinking Block":          "O",  # → ON/OFF block (togglable solid)
+    "Crate":                   "B",  # → Brick (breakable box)
+    "Tree":                    "k",  # → Semisolid platform (stand on the canopy)
+    "! Block":                 "B",  # → Brick (solid block flipped by the ! switch)
+    # doors / warps
+    "Warp Box":                "D",  # → Door (instant warp)
+    "Clear Pipe":              "|",  # → Pipe (SM3DW pipe variant)
+    # enemies
+    "Piranha Creeper":         "P",  # → Piranha Plant
+    "Porcupuffer":             "~",  # → Cheep Cheep (aquatic)
+    "Ant Trooper":             "b",  # → Buzzy Beetle (armored ground walker)
+    "Skipsqueak":              "g",  # → Goomba (small stompable walker)
+    "Stingby":                 "L",  # → Lakitu (nearest flying enemy)
+    "Charvaargh":              "&",  # → Lava Bubble (lava fire hazard)
+    "Bully":                   "K",  # → Koopa (ground walker)
+    # items / power-ups
+    "Super Hammer":            "M",  # → Mushroom (power-up pickup)
+    "Cannon Box":              "M",  # → Mushroom (wearable power-up box)
+    "Propeller Box":           "M",  # → Mushroom (wearable power-up box)
+    "Goomba Mask":             "M",  # → Mushroom (wearable power-up box)
+    "Bullet Bill Mask":        "M",  # → Mushroom (wearable power-up box)
+    "Red POW Box":             "W",  # → POW (a POW in a box)
+    "Big Coin":                "c",  # → Coin (free path draws coins; covers the in-block path)
+    # platforms — track/conveyor/snake levels are normally dropped upstream by
+    "Sprint Platform":         "k",  # → Semisolid platform (SM3DW dash platform)
+    "Koopa Clown Car":         ";",  # → Clown Car
+    "Conveyor Belt":           "k",  # → Semisolid platform
+    "Fast Conveyor Belt":      "k",  # → Semisolid platform
+    "Snake Block":             "k",  # → Semisolid platform (moving path)
+    "Track Block":             "k",  # → Semisolid platform (track-riding block)
+    # Slopes are special-drawn as a ground staircase (see ascii.py); '#' just
+    # records that reduction so the coverage check below stays happy.
+    "Slight Slope":            "#",  # → Ground (staircase fill)
+    "Steep Slope":             "#",  # → Ground (staircase fill)
 }
 
 # Editor/decorative markers with no tileset glyph: dropped from the grid.
 ASCII_DROP = {
     "Castle Bridge",   # the goal-castle bridge is generated automatically
     "Key", "Arrow", "Water Marker", "Reel Camera", "Sound Effect",
-    "Player", "Track", "Starting Arrow",
+    "Player", "Track", "Starting Arrow", 
 }
+
+
+def _check_tileset_coverage():
+    """Every object we actually draw must end up on a glyph the tileset knows.
+
+    OBJ_META still carries glyphs from the older, larger vocabulary; the ones
+    missing from mm2_tileset_we.json have to be folded onto a real tile via
+    ASCII_REPLACEMENTS (or skipped via ASCII_DROP), or they leak into the ASCII
+    as a raw Latin-1 char and silently become the unknown tile in training --
+    the bug that let Donut's "Ã" through. Run at import so a later OBJ_META edit
+    that forgets the fold fails loudly here instead of polluting a dataset.
+    """
+    leaks = {}
+    for name, (glyph, _color, _cat) in OBJ_META.items():
+        if name == "_unknown" or name in ASCII_DROP:
+            continue
+        final = ASCII_REPLACEMENTS.get(name, glyph)
+        if final not in TILESET:
+            leaks[name] = final
+    if leaks:
+        listing = ", ".join(f"{n!r}->{g!r}" for n, g in sorted(leaks.items()))
+        raise ValueError(
+            f"OBJ_META objects with no tileset glyph: {listing}. Add each to "
+            "ASCII_REPLACEMENTS (fold onto a tileset glyph) or ASCII_DROP (skip it)."
+        )
+
+
+_check_tileset_coverage()
 
 CAT_COLORS = {
     CAT_TERRAIN:  "#C8A050",
@@ -269,22 +334,17 @@ CAT_COLORS = {
     CAT_OTHER:    "#AAAAAA",
 }
 
-# Style Power-ups: objects.id 44 ("Big Mushroom") and 81 ("SMB2 Mushroom")
-# are decoded with fixed SMB1 names, but the power-up actually granted (and
-# its sprite) depends on the level's gamestyle_raw. See
-# mm2_json_field_dictionary.txt §5 for the full mapping.
+# Style Power-up: objects.id 44 ("Big Mushroom") is decoded with a fixed SMB1
+# name, but the power-up actually granted (and its sprite) depends on the
+# level's gamestyle_raw. See mm2_json_field_dictionary.txt §5 for the mapping.
+# (The id-81 "SMB2 Mushroom" slot B is intentionally absent: SMM:WE has no
+# equivalent, so those levels are dropped at extraction -- see bcd.SKIP_ITEM_NAMES.)
 STYLE_POWERUP_NAMES = {
     "Big Mushroom": {     # Slot A (id 44, since v1.0.0)
         12621: "Big Mushroom",       # SMB1   -> Mega Mario
         13133: "Super Leaf",         # SMB3   -> Raccoon Mario
         22349: "Cape Feather",        # SMW    -> Cape Mario
         21847: "Propeller Mushroom",  # NSMBU  -> Propeller Mario
-    },
-    "SMB2 Mushroom": {    # Slot B (id 81, since v3.0.0)
-        12621: "Link",                 # SMB1   -> Link Mario (Master Sword)
-        13133: "Frog Suit",           # SMB3   -> Frog Mario
-        22349: "Power Balloon",        # SMW    -> Balloon Mario
-        21847: "Super Acorn",          # NSMBU  -> Flying Squirrel Mario
     },
 }
 
@@ -303,7 +363,7 @@ STYLE_RIDE_NAMES = {
 
 def resolve_obj_name(obj_name: str, gamestyle_raw: int) -> str:
     """Map a decoded object name to its gamestyle-correct name for
-    Style Power-up slots (id 44 / 81) and the Style Ride slot (id 45);
+    the Style Power-up slot (id 44) and the Style Ride slot (id 45);
     passes through unchanged otherwise."""
     for table in (STYLE_POWERUP_NAMES, STYLE_RIDE_NAMES):
         variants = table.get(obj_name)
@@ -337,8 +397,8 @@ CHAR_TO_NAME = build_char_to_name()
 
 # OBJ_META display name -> MM2 object id (level.ksy obj_id enum). Keyed by the
 # canonical names in OBJ_META so the values CHAR_TO_NAME produces resolve
-# directly. Gamestyle-variant aliases (Super Leaf, Link, Yoshi's Egg, ...) point
-# at their shared slot id. "Ground" is intentionally absent: the '#' glyph goes
+# directly. Gamestyle-variant aliases (Super Leaf, Cape Feather, Yoshi's Egg, ...)
+# point at their shared slot id. "Ground" is intentionally absent: the '#' glyph goes
 # to the `ground` array, never `objects`.
 NAME_TO_ID = {
     # terrain / blocks
@@ -366,9 +426,8 @@ NAME_TO_ID = {
     # items
     "Coin": 8, "Red Coin": 92, "1-Up Mushroom": 33, "1UP": 33,
     "Fire Flower": 34, "Super Star": 35, "Super Mushroom": 20,
-    "Big Mushroom": 44, "SMB2 Mushroom": 81, "Super Leaf": 44,
-    "Cape Feather": 44, "Propeller Mushroom": 44, "Link": 81, "Frog Suit": 81,
-    "Power Balloon": 81, "Super Acorn": 81, "Super Hammer": 116, "Big Coin": 70,
+    "Big Mushroom": 44, "Super Leaf": 44, "Cape Feather": 44,
+    "Propeller Mushroom": 44, "Super Hammer": 116, "Big Coin": 70,
     "P Switch": 18, "POW Block": 19, "POW": 19, "Spring": 10,
     "Goomba's Shoe": 45, "Yoshi's Egg": 45, "Cannon Box": 127,
     "Propeller Box": 128, "Goomba Mask": 129, "Bullet Bill Mask": 130,

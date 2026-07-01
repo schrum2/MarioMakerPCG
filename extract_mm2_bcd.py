@@ -62,6 +62,7 @@ Requirements:
 """
 
 import argparse
+import json
 import os
 import struct
 import zlib
@@ -203,6 +204,7 @@ SKIP_ITEM_NAMES = [
     "track",
     "track_block",
     "snake_block",
+    "smb2_mushroom",  # v3.0.0 style power-up: no SMM:WE equivalent, levels often depend on it
 ]
 
 SKIP_OBJECT_IDS = {OBJ_ID[name] for name in SKIP_ITEM_NAMES}
@@ -307,6 +309,94 @@ def build_bcd(plaintext: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# Course tags
+# ---------------------------------------------------------------------------
+# Tags aren't in the .bcd payload (they're server-side metadata), so Toost
+# can't emit them. The dataset stores them as the tag1/tag2 integer columns;
+# map those to the names the game shows. 0 means no tag.
+TAGS = {
+    0: "None",
+    1: "Standard",
+    2: "Puzzle solving",
+    3: "Speedrun",
+    4: "Autoscroll",
+    5: "Auto mario",
+    6: "Short and sweet",
+    7: "Multiplayer versus",
+    8: "Themed",
+    9: "Music",
+    10: "Art",
+    11: "Technical",
+    12: "Shooter",
+    13: "Boss battle",
+    14: "Single player",
+    15: "Link", # Keeping this here, but this is probably not in v1.0.0 since the Link power up wasn't. Still I don't want to find out if the data will screw up without accounting for all the tags.
+}
+
+
+def level_tags(row) -> list:
+    """Resolve a level's tag1/tag2 columns into a de-duplicated list of tag
+    names. Empty slots are 0 ("None"); a level can have zero, one, or two tags."""
+    names = []
+    for key in ("tag1", "tag2"):
+        value = row.get(key)
+        if value in (None, 0):
+            continue
+        name = TAGS.get(value, f"unknown_{value}")
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def resolve_tag_filter(tokens):
+    """Turn the --tag CLI tokens into a set of lowercased tag names to match
+    against. Each token may be a tag name (case-insensitive, e.g. "speedrun")
+    or its numeric id (e.g. "3"). Raises SystemExit on an unknown tag."""
+    name_by_lower = {name.lower(): name for value, name in TAGS.items() if value != 0}
+    resolved = set()
+    for token in tokens:
+        key = token.strip().lower()
+        if key.isdigit() and int(key) in TAGS and int(key) != 0:
+            resolved.add(TAGS[int(key)].lower())
+        elif key in name_by_lower:
+            resolved.add(key)
+        else:
+            valid = ", ".join(TAGS[v] for v in sorted(TAGS) if v != 0)
+            raise SystemExit(f"Unknown tag '{token}'. Valid tags: {valid}")
+    return resolved
+
+
+# ---------------------------------------------------------------------------
+# Difficulty
+# ---------------------------------------------------------------------------
+# Difficulty is another server-side column (0-indexed) we can filter on.
+DIFFICULTY = {
+    0: "Easy",         # Rest of the levels with a clear rate > 30%
+    1: "Normal",       # Levels with a clear rate < 30%
+    2: "Expert",       # Levels with a clear rate < 10%
+    3: "Super expert", # Levels with a clear rate < 2%
+}
+
+
+def resolve_difficulty_filter(tokens):
+    """Turn the --difficulty CLI tokens into a set of difficulty ids to match
+    against. Each token may be a difficulty name (case-insensitive, e.g.
+    "normal") or its numeric id (e.g. "1"). Raises SystemExit on a bad value."""
+    id_by_lower = {name.lower(): value for value, name in DIFFICULTY.items()}
+    resolved = set()
+    for token in tokens:
+        key = token.strip().lower()
+        if key.isdigit() and int(key) in DIFFICULTY:
+            resolved.add(int(key))
+        elif key in id_by_lower:
+            resolved.add(id_by_lower[key])
+        else:
+            valid = ", ".join(f"{v}={DIFFICULTY[v]}" for v in sorted(DIFFICULTY))
+            raise SystemExit(f"Unknown difficulty '{token}'. Valid difficulties: {valid}")
+    return resolved
+
+
+# ---------------------------------------------------------------------------
 # Dataset extraction
 # ---------------------------------------------------------------------------
 
@@ -330,6 +420,9 @@ def extract_levels(
     data_id_filter=None,
     name_filter=None,
     name_count=None,
+    tag_filter=None,
+    tag_match_all=False,
+    difficulty_filter=None,
     skip_3dworld: bool = False,
     skip_items: bool = False,
     skip_subworld_items: bool = False,
@@ -346,7 +439,13 @@ def extract_levels(
     skipped_3dw = 0
     skipped_items = 0
     skipped_subworld = 0
+    skipped_boos = 0
     name_saved = 0
+
+    # filename stem -> {difficulty, tags}, written to level_metadata.json for the
+    # conversion step. Both are server-side columns that aren't in the .bcd payload
+    # (so Toost can't emit them) and have to be carried forward by hand.
+    metadata_index = {}
 
     for row in ds:
         data_id = row["data_id"]
@@ -358,6 +457,24 @@ def extract_levels(
             level_name = str(row.get("name", ""))
             if name_filter.lower() not in level_name.lower():
                 continue
+
+        # Resolve once so we can filter on tags and reuse them when saving.
+        these_tags = level_tags(row)
+        if tag_filter is not None:
+            level_tag_set = {t.lower() for t in these_tags}
+            if tag_match_all:
+                if not tag_filter.issubset(level_tag_set):
+                    continue
+            elif not tag_filter & level_tag_set:
+                continue
+
+        if difficulty_filter is not None and row.get("difficulty") not in difficulty_filter:
+            continue
+
+        # Skip levels the community disliked more than it liked, on principle.
+        if (row.get("boos") or 0) > (row.get("likes") or 0):
+            skipped_boos += 1
+            continue
 
         raw = row["level_data"]
         if raw is None:
@@ -405,6 +522,10 @@ def extract_levels(
             filename = f"{data_id}.bcd"
 
         (out / filename).write_bytes(bcd)
+        metadata_index[Path(filename).stem] = {
+            "difficulty": DIFFICULTY.get(row.get("difficulty"), "Unknown"),
+            "tags": these_tags,
+        }
         saved += 1
 
         if name_filter is not None and name_count is not None:
@@ -417,13 +538,19 @@ def extract_levels(
         if limit is not None and saved >= limit:
             break
 
+    (out / "level_metadata.json").write_text(
+        json.dumps(metadata_index, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
     print(
         f"\nDone. Saved: {saved}  |  Skipped (null): {skipped}  |  "
         f"Skipped (3D World): {skipped_3dw}  |  Skipped (banned item): {skipped_items}  |  "
         f"Skipped (subworld has items): {skipped_subworld}  |  "
+        f"Skipped (more boos than likes): {skipped_boos}  |  "
         f"Errors: {errors}"
     )
     print(f"Output dir: {out.resolve()}")
+    print(f"Wrote metadata for {len(metadata_index)} level(s) -> {(out / 'level_metadata.json').resolve()}")
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +573,17 @@ def parse_args():
                    metavar="DATA_ID", help="Only extract these data_ids")
     p.add_argument("--name", type=str, default=None, help="Extract levels whose name contains this text")
     p.add_argument("--name_count", type=int, default=None, help="Number of matching levels to extract")
+    p.add_argument("--tag", nargs="+", default=None, metavar="TAG",
+                   help="Only extract levels carrying at least one of these tags "
+                        "(name or id, e.g. --tag Speedrun \"Short and sweet\"). "
+                        "Tags: " + ", ".join(TAGS[v] for v in sorted(TAGS) if v != 0))
+    p.add_argument("--all-tags", action="store_true",
+                   help="Require every --tag to be present, not just one. A level "
+                        "can have at most 2 tags, so passing more than 2 is an error.")
+    p.add_argument("--difficulty", nargs="+", default=None, metavar="DIFFICULTY",
+                   help="Only extract levels at one of these difficulties "
+                        "(name or id, e.g. --difficulty Easy Normal). "
+                        "Difficulties: " + ", ".join(f"{v}={DIFFICULTY[v]}" for v in sorted(DIFFICULTY)))
     p.add_argument("--skip_3dworld", action="store_true",
                    help="Skip levels whose gamestyle is Super Mario 3D World")
     p.add_argument("--skip_items", action="store_true",
@@ -455,9 +593,18 @@ def parse_args():
     return p.parse_args()
 
 # python extract_mm2_bcd.py --name "mario" --name_count 25
+# python extract_mm2_bcd.py --tag Speedrun --limit 50
 
 if __name__ == "__main__":
     args = parse_args()
+
+    tag_filter = resolve_tag_filter(args.tag) if args.tag else None
+    if args.all_tags:
+        if not tag_filter:
+            raise SystemExit("--all-tags only makes sense together with --tag.")
+        if len(tag_filter) > 2:
+            raise SystemExit("--all-tags takes at most 2 tags (a level can't have more than 2).")
+
     extract_levels(
         output_dir=args.output_dir,
         limit=args.limit,
@@ -465,6 +612,9 @@ if __name__ == "__main__":
         data_id_filter=set(args.ids) if args.ids else None,
         name_filter=args.name,
         name_count=args.name_count,
+        tag_filter=tag_filter,
+        tag_match_all=args.all_tags,
+        difficulty_filter=resolve_difficulty_filter(args.difficulty) if args.difficulty else None,
         skip_3dworld=args.skip_3dworld,
         skip_items=args.skip_items,
         skip_subworld_items=args.skip_subworld_items,
