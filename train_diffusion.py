@@ -114,6 +114,10 @@ def parse_args():
     parser.add_argument("--save_image_epochs", type=int, default=20, help="Save generated levels every N epochs")
     parser.add_argument("--save_model_epochs", type=int, default=20, help="Save model every N epochs")
     parser.add_argument("--mixed_precision", type=str, default="no", choices=["no", "fp16", "bf16"], help="Mixed precision type")
+    parser.add_argument("--gradient_checkpointing", action="store_true", help="Enable gradient checkpointing to reduce VRAM usage at the cost of slower training")
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of DataLoader worker processes")
+    parser.add_argument("--pin_memory", action="store_true", help="Use pinned memory for faster host-to-device transfers when CUDA is available")
+    parser.add_argument("--use_tf32", action="store_true", help="Enable TF32 matmul kernels on supported NVIDIA GPUs for faster training")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--validate_epochs", type=int, default=5, help="Calculate validation loss every N epochs")
     parser.add_argument("--max_iterations", type=float, default=float("inf"), help="Maximum number of training iterations (global steps). Training will stop when this is exceeded. Default is infinity (no limit).")
@@ -375,6 +379,10 @@ def main():
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
+        torch.backends.cuda.matmul.allow_tf32 = args.use_tf32
+        torch.backends.cudnn.allow_tf32 = args.use_tf32
+        torch.backends.cudnn.benchmark = True
+        torch.set_float32_matmul_precision("high" if args.use_tf32 else "highest")
     
     # Setup accelerator
     accelerator = Accelerator(
@@ -429,7 +437,9 @@ def main():
                                         block_embeddings=block_embeddings, batch_size=args.batch_size,
                                         persistent_workers=(not args.auto_augment),
                                         multiple_captions=args.multiple_captions,
-                                        require_captions=args.text_conditional)
+                                        require_captions=args.text_conditional,
+                                        num_workers=args.num_workers,
+                                        pin_memory=(args.pin_memory and torch.cuda.is_available()))
 
     # Persist the BucketBatchSampler's scene-width range alongside the model so post-training
     # tools (evaluate_caption_adherence.py, run_diffusion.py) can randomize generated widths
@@ -517,6 +527,9 @@ def main():
             up_block_types=[item.replace("CrossAttn", "") for item in args.up_block_types],
             attention_head_dim=args.attention_head_dim,  # Number of attention heads: only matters if some AttnDownBlock2D or AttnUpBlock2D are used
         )
+
+    if args.gradient_checkpointing:
+        model.enable_gradient_checkpointing()
     
     # Setup the noise scheduler
     noise_scheduler = DDPMScheduler(
@@ -760,7 +773,7 @@ def main():
         
         for batch in train_dataloader:
             # Add explicit memory clearing at start of batch
-            if torch.cuda.is_available():
+            if args.auto_augment and torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
             with accelerator.accumulate(model):
@@ -772,7 +785,7 @@ def main():
                     accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
             train_loss += loss.detach().item()
 
             # Update progress bar
@@ -782,8 +795,8 @@ def main():
             
             # Detach tensors and clear memory
             del loss
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
+            #if torch.cuda.is_available():
+            #    torch.cuda.synchronize()
 
             
                         
@@ -810,8 +823,8 @@ def main():
                     val_loss += val_batch_loss.item()
                     # Clear memory after each validation batch
                     del val_batch_loss
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+                    #if torch.cuda.is_available():
+                    #    torch.cuda.empty_cache()
 
             val_loss /= len(val_dataloader)
 
