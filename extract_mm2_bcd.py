@@ -422,7 +422,10 @@ def extract_levels(
     name_count=None,
     tag_filter=None,
     tag_match_all=False,
+    exclude_tag_filter=None,
     difficulty_filter=None,
+    min_likes=None,
+    max_dislikes=None,
     skip_3dworld: bool = False,
     skip_items: bool = False,
     skip_subworld_items: bool = False,
@@ -440,6 +443,9 @@ def extract_levels(
     skipped_items = 0
     skipped_subworld = 0
     skipped_boos = 0
+    skipped_likes = 0
+    skipped_dislikes = 0
+    skipped_excluded_tag = 0
     name_saved = 0
 
     # filename stem -> {difficulty, tags}, written to level_metadata.json for the
@@ -468,7 +474,25 @@ def extract_levels(
             elif not tag_filter & level_tag_set:
                 continue
 
+        # Drop anything wearing a tag the caller asked us to leave out
+        # (e.g. --exclude-tag Art skips every level flagged as art).
+        if exclude_tag_filter is not None:
+            if exclude_tag_filter & {t.lower() for t in these_tags}:
+                skipped_excluded_tag += 1
+                continue
+
         if difficulty_filter is not None and row.get("difficulty") not in difficulty_filter:
+            continue
+
+        # Popularity gates: require at least --likes likes and no more than
+        # --dislikes boos (the game's word for a thumbs-down). A missing count
+        # reads as 0, so a level with no votes clears a dislike ceiling but not
+        # a likes floor above zero.
+        if min_likes is not None and (row.get("likes") or 0) < min_likes:
+            skipped_likes += 1
+            continue
+        if max_dislikes is not None and (row.get("boos") or 0) > max_dislikes:
+            skipped_dislikes += 1
             continue
 
         # Skip levels the community disliked more than it liked, on principle.
@@ -547,6 +571,9 @@ def extract_levels(
         f"Skipped (3D World): {skipped_3dw}  |  Skipped (banned item): {skipped_items}  |  "
         f"Skipped (subworld has items): {skipped_subworld}  |  "
         f"Skipped (more boos than likes): {skipped_boos}  |  "
+        f"Skipped (too few likes): {skipped_likes}  |  "
+        f"Skipped (too many dislikes): {skipped_dislikes}  |  "
+        f"Skipped (excluded tag): {skipped_excluded_tag}  |  "
         f"Errors: {errors}"
     )
     print(f"Output dir: {out.resolve()}")
@@ -580,10 +607,17 @@ def parse_args():
     p.add_argument("--all-tags", action="store_true",
                    help="Require every --tag to be present, not just one. A level "
                         "can have at most 2 tags, so passing more than 2 is an error.")
+    p.add_argument("--exclude-tag", nargs="+", default=None, metavar="TAG",
+                   help="Skip levels carrying any of these tags (name or id, e.g. "
+                        "--exclude-tag Art Music). Applied after --tag.")
     p.add_argument("--difficulty", nargs="+", default=None, metavar="DIFFICULTY",
                    help="Only extract levels at one of these difficulties "
                         "(name or id, e.g. --difficulty Easy Normal). "
                         "Difficulties: " + ", ".join(f"{v}={DIFFICULTY[v]}" for v in sorted(DIFFICULTY)))
+    p.add_argument("--likes", type=int, default=None, metavar="N",
+                   help="Only extract levels with at least N likes (e.g. --likes 1000)")
+    p.add_argument("--dislikes", type=int, default=None, metavar="N",
+                   help="Only extract levels with at most N dislikes/boos (e.g. --dislikes 300)")
     p.add_argument("--skip_3dworld", action="store_true",
                    help="Skip levels whose gamestyle is Super Mario 3D World")
     p.add_argument("--skip_items", action="store_true",
@@ -594,6 +628,7 @@ def parse_args():
 
 # python extract_mm2_bcd.py --name "mario" --name_count 25
 # python extract_mm2_bcd.py --tag Speedrun --limit 50
+# python extract_mm2_bcd.py --likes 1000 --dislikes 300 --exclude-tag Art --limit 50
 
 if __name__ == "__main__":
     args = parse_args()
@@ -605,6 +640,13 @@ if __name__ == "__main__":
         if len(tag_filter) > 2:
             raise SystemExit("--all-tags takes at most 2 tags (a level can't have more than 2).")
 
+    exclude_tag_filter = resolve_tag_filter(args.exclude_tag) if args.exclude_tag else None
+    # Asking to both keep and drop the same tag can never match anything, so
+    # flag it up front instead of silently returning zero levels.
+    if tag_filter and exclude_tag_filter and (tag_filter & exclude_tag_filter):
+        clash = ", ".join(sorted(tag_filter & exclude_tag_filter))
+        raise SystemExit(f"--tag and --exclude-tag can't share a tag: {clash}")
+
     extract_levels(
         output_dir=args.output_dir,
         limit=args.limit,
@@ -614,7 +656,10 @@ if __name__ == "__main__":
         name_count=args.name_count,
         tag_filter=tag_filter,
         tag_match_all=args.all_tags,
+        exclude_tag_filter=exclude_tag_filter,
         difficulty_filter=resolve_difficulty_filter(args.difficulty) if args.difficulty else None,
+        min_likes=args.likes,
+        max_dislikes=args.dislikes,
         skip_3dworld=args.skip_3dworld,
         skip_items=args.skip_items,
         skip_subworld_items=args.skip_subworld_items,

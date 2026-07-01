@@ -5,6 +5,7 @@ REM <count>         number of levels to extract
 REM <output_folder> folder that will hold bcd/, json/, images/ and ascii/ subfolders
 REM [extra]         passed straight to extract_mm2_bcd.py, e.g.
 REM                 --tag Speedrun --difficulty Easy Normal
+REM                 --likes 1000 --dislikes 300 --exclude-tag Art
 cd ..
 
 set NAME=%~1
@@ -21,14 +22,17 @@ if "%OUTPUT%"=="" (
 )
 
 REM Anything past the first three args is forwarded to the extractor as-is.
-REM While forwarding, also remember the --tag / --difficulty values so we can
-REM note them in extract_info.txt at the end.
+REM While forwarding, also remember the --tag / --exclude-tag / --difficulty /
+REM --likes / --dislikes values so we can note them in extract_info.txt.
 shift
 shift
 shift
 set EXTRA=
 set TAG_VALUES=
+set XTAG_VALUES=
 set DIFF_VALUES=
+set LIKES_VALUE=
+set DISLIKES_VALUE=
 set CAPMODE=
 :collect_extra
 if "%~1"=="" goto after_collect
@@ -36,19 +40,32 @@ set EXTRA=%EXTRA% %1
 set "CUR=%~1"
 if /i "%CUR%"=="--tag" (
     set CAPMODE=tag
+) else if /i "%CUR%"=="--exclude-tag" (
+    set CAPMODE=xtag
 ) else if /i "%CUR%"=="--difficulty" (
     set CAPMODE=diff
+) else if /i "%CUR%"=="--likes" (
+    set CAPMODE=likes
+) else if /i "%CUR%"=="--dislikes" (
+    set CAPMODE=dislikes
 ) else if "%CUR:~0,2%"=="--" (
     set CAPMODE=
 ) else if "%CAPMODE%"=="tag" (
     set "TAG_VALUES=%TAG_VALUES% %~1"
+) else if "%CAPMODE%"=="xtag" (
+    set "XTAG_VALUES=%XTAG_VALUES% %~1"
 ) else if "%CAPMODE%"=="diff" (
     set "DIFF_VALUES=%DIFF_VALUES% %~1"
+) else if "%CAPMODE%"=="likes" (
+    set "LIKES_VALUE=%~1"
+) else if "%CAPMODE%"=="dislikes" (
+    set "DISLIKES_VALUE=%~1"
 )
 shift
 goto collect_extra
 :after_collect
 if defined TAG_VALUES set "TAG_VALUES=%TAG_VALUES:~1%"
+if defined XTAG_VALUES set "XTAG_VALUES=%XTAG_VALUES:~1%"
 if defined DIFF_VALUES set "DIFF_VALUES=%DIFF_VALUES:~1%"
 
 for %%I in ("%OUTPUT%") do set "OUTPUT=%%~fI"
@@ -93,7 +110,10 @@ echo name=%NAME%
 echo requested_count=%COUNT%
 echo levels_extracted=%LEVEL_COUNT%
 if defined TAG_VALUES echo tags=%TAG_VALUES%
+if defined XTAG_VALUES echo excluded_tags=%XTAG_VALUES%
 if defined DIFF_VALUES echo difficulty=%DIFF_VALUES%
+if defined LIKES_VALUE echo min_likes=%LIKES_VALUE%
+if defined DISLIKES_VALUE echo max_dislikes=%DISLIKES_VALUE%
 )>"%OUTPUT%\extract_info.txt"
 
 echo === Done! ===
