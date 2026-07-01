@@ -6,7 +6,7 @@ import torch
 from evolution.genome import LatentGenome
 from create_ascii_captions import assign_caption
 #from LR_create_ascii_captions import assign_caption as lr_assign_caption
-from MarioMaker_create_ascii_captions import assign_caption as mm_assign_caption, build_id_to_char, get_char_names
+from MarioMaker_create_ascii_captions import assign_caption as mm_assign_caption, build_id_to_char, get_char_names, get_tile_categories
 import util.common_settings as common_settings
 from models.pipeline_loader import get_pipeline
 
@@ -27,6 +27,7 @@ class DiffusionEvolver(Evolver):
         if args is not None and args.game == 'MM':
             self.mm_id_to_char = build_id_to_char(tileset_path)
             self.mm_char_names = get_char_names(tileset_path)
+            self.mm_enemy_chars, self.mm_item_chars, self.mm_ground_chars = get_tile_categories(tileset_path)
 
     def random_latent(self, seed=1):
         if args.game == "Mario":
@@ -93,7 +94,8 @@ class DiffusionEvolver(Evolver):
         if args.game == 'Mario':
             actual_caption = assign_caption(scene, self.id_to_char, self.char_to_id, self.tile_descriptors, False, self.args.describe_absence)
         elif args.game == 'MM':
-            actual_caption = mm_assign_caption(scene, self.mm_id_to_char, self.mm_char_names)
+            actual_caption = mm_assign_caption(scene, self.mm_id_to_char, self.mm_char_names,
+                                               self.mm_enemy_chars, self.mm_item_chars, self.mm_ground_chars)
         elif args.game == 'LR':
             actual_caption = lr_assign_caption(scene, self.id_to_char, self.char_to_id, self.tile_descriptors, False, self.args.describe_absence)
         g.caption = actual_caption
