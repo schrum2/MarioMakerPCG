@@ -1,3 +1,5 @@
+cd ..
+
 python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V16_05" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.05
 python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V16_03" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.03
 python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V16_07" --embedding_dim 16 --vocab_size 69 --subsample_threshold 0.07
@@ -135,3 +137,9 @@ REM --- 3d: one targeted dim=24 run at the best known settings, to see whether
 REM     the higher-dim advantage survives the lower threshold / neg=15 combination
 python train_block2vec.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "B2V_dim24_thresh01_neg15" --embedding_dim 24 --vocab_size 69 --subsample_threshold 0.01 --negative_samples 15
 python train_skipgram.py --json_file datasets\Tile3x3_dataset_10k_1-_bucket.json --output_dir "Skip_dim24_thresh01_neg15" --embedding_dim 24 --vocab_size 69 --subsample_threshold 0.01 --negative_samples 15
+
+
+REM Creates detailed report comparing embeddings
+python compare_embeddings.py
+
+

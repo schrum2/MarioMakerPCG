@@ -248,3 +248,4 @@ MM2_Prompt.txt
 *.safetensors
 *.jsonl
 *.pkl
+embedding_comparison/embedding_comparison_report.md
