@@ -37,7 +37,7 @@ MegaManState = mm.MegaManState
 # Default tileset per game (the one each dataset is normally created with).
 DEFAULT_TILESETS = {
     "Mario": common_settings.MARIO_TILESET,
-    "MM2": common_settings.MM2_TILESET,     # Mario Maker 2 (same tileset as Mario here)
+    "MM2": common_settings.MM2_TILESET,     # Mario Maker 2
     "LR": common_settings.LR_TILESET,
     "MM": common_settings.MM_SIMPLE_TILESET,
 }
@@ -296,8 +296,7 @@ def evaluate(game, scene, id_to_char, descs, budget, allow_weird, visualize=Fals
     spawn/orb are MM-only optional (x, y) cells used as the start and goal; they are
     ignored for Mario and LR."""
     if game in ("Mario", "MM2"):
-        # MM2 (Mario Maker 2) reuses the Mario platformer model and its right-edge goal;
-        # only the render target differs (MM2 sprites vs SMB), handled by _render_target.
+        # MM2 reuses the Mario model; only the render target differs
         return mario_traversable(scene, id_to_char, descs, budget, visualize=visualize)
     if game == "LR":
         return lr_traversable(scene, id_to_char, descs, budget,

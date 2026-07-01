@@ -884,6 +884,17 @@ class TileViewer(tk.Tk):
     def astar_composed_level(self):
         scene = self.merge_selected_scenes()
         if scene:
+            if self.game.get() == "MM2":
+                # No Java sim for MM2, use the Python astar/ check instead
+                from astar.astar_traversability_check import astar_path_image
+                img, traversable, stats = astar_path_image(
+                    scene, "MM2", self.id_to_char, self.tile_descriptors)
+                verdict = "TRAVERSABLE" if traversable else "NOT traversable"
+                detail = ", ".join(f"{k}={v}" for k, v in stats.items())
+                print(f"{verdict}  ({detail})")
+                if img is not None:
+                    img.show()
+                return
             level = self.get_sample_output(scene, use_snes_graphics=self.use_snes_graphics.get())
             console_output = level.run_astar()
             print(console_output)
@@ -933,6 +944,9 @@ class TileViewer(tk.Tk):
                 use_snes_graphics = self.use_snes_graphics.get()
             char_grid = scene_to_ascii(scene, self.id_to_char)
             level = SampleOutput(level=char_grid, use_snes_graphics=use_snes_graphics)
+        else:
+            # MM2 has no Java sim (it uses the Python A* path)
+            raise ValueError(f"get_sample_output: no simulator for game {self.game.get()!r}")
         return level
 
     def show_caption_context_menu(self, event):
