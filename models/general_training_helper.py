@@ -63,8 +63,9 @@ class BucketBatchSampler:
                     continue
                 self.batches.append(batch)
 
-        # Unique scene widths present in the dataset; used to generate variably-sized benchmark samples at epoch checkpoints during training
-        self.shapes = list(dict.fromkeys(w for _, w in buckets))
+        # Unique scene shapes (height, width) present in the dataset; used to generate
+        # variably-sized benchmark samples at epoch checkpoints during training.
+        self.shapes = list(buckets.keys())
 
     def __iter__(self):
         # Re-shuffle every epoch so sample order varies across epochs, matching DataLoader(shuffle=True) behavior.
