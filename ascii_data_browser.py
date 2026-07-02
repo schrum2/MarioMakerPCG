@@ -886,14 +886,9 @@ class TileViewer(tk.Tk):
         if scene:
             if self.game.get() == "MM2":
                 # No Java sim for MM2, use the Python astar/ check instead
-                from astar.astar_traversability_check import astar_path_image
-                img, traversable, stats = astar_path_image(
-                    scene, "MM2", self.id_to_char, self.tile_descriptors)
-                verdict = "TRAVERSABLE" if traversable else "NOT traversable"
-                detail = ", ".join(f"{k}={v}" for k, v in stats.items())
-                print(f"{verdict}  ({detail})")
-                if img is not None:
-                    img.show()
+                from astar.astar_traversability_check import astar_console_report
+                print(astar_console_report(scene, id_to_char=self.id_to_char,
+                                           tile_descriptors=self.tile_descriptors))
                 return
             level = self.get_sample_output(scene, use_snes_graphics=self.use_snes_graphics.get())
             console_output = level.run_astar()

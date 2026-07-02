@@ -334,8 +334,8 @@ def _render_target(game, tileset_path):
 
 # Render-style game names (as used by run_diffusion and the GUIs) -> the game names
 # evaluate() understands. The render name itself doubles as visualize_path's target.
-RENDER_GAME_TO_TRAV = {"Mario": "Mario", "MM2": "MM2", "LR": "LR",
-                       "MM-Simple": "MM", "MM-Full": "MM"}
+RENDER_GAME_TO_TRAV = {"Mario": "Mario", "MM2": "MM2", "MM": "MM2", "LR": "LR",
+                       "MM-Simple": "MM", "MM-Full": "MM"}   # "MM" is the app alias for MM2
 
 
 def astar_path_image(scene, game, id_to_char, tile_descriptors, budget=100000,
@@ -359,6 +359,26 @@ def astar_path_image(scene, game, id_to_char, tile_descriptors, budget=100000,
     from astar_path_visualization import render_info
     img = render_info(scene, game, info, show_visited=show_visited)
     return img, ok, stats
+
+
+def astar_console_report(scene, game="MM2", id_to_char=None, tile_descriptors=None,
+                         tileset_path=None, budget=100000, show_image=True):
+    """Run the A* check on one scene and return a printable verdict line (and, with
+    show_image, pop the path overlay). For Mario Maker, which has no Java simulator.
+    id_to_char/tile_descriptors are loaded from tileset_path when not supplied -- some
+    GUIs only carry id_to_char."""
+    if id_to_char is None or tile_descriptors is None:
+        path = tileset_path or DEFAULT_TILESETS[RENDER_GAME_TO_TRAV[game]]
+        if not os.path.isabs(path) and not os.path.exists(path):
+            path = os.path.join(_REPO_ROOT, path)
+        _, id_to_char, _, tile_descriptors = extract_tileset(path)
+    img, traversable, stats = astar_path_image(scene, game, id_to_char, tile_descriptors,
+                                               budget=budget)
+    if show_image and img is not None:
+        img.show()
+    verdict = "TRAVERSABLE" if traversable else "NOT traversable"
+    detail = ", ".join(f"{k}={v}" for k, v in stats.items())
+    return f"{verdict}  ({detail})"
 
 
 def main():

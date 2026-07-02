@@ -120,9 +120,10 @@ class InteractiveLevelGeneration(InteractiveGeneration):
         play_level = input("Do you want to play this level? (y/n): ").strip().lower()
         if play_level == 'y':
             print("Playing level...")
-            char_grid = scene_to_ascii(scene, self.id_to_char, False)
-            level = SampleOutput(level=char_grid, use_snes_graphics=False)
-            console_output = level.run_astar()
+            # Mario Maker (MM2), so use the Python astar/ check instead of the Java sim
+            from astar.astar_traversability_check import astar_console_report
+            console_output = astar_console_report(scene, id_to_char=self.id_to_char,
+                                                  tile_descriptors=self.tile_descriptors)
             print(console_output)
         elif play_level == 'n':
             print("Level not played.")

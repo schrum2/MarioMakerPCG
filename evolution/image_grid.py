@@ -412,6 +412,11 @@ class ImageGridViewer:
     def _astar_composed_level(self):
         composed_scene = self._merge_composed_scenes()
         if composed_scene:
+            if self.args.game == "MM":
+                # No Java sim for Mario Maker, use the Python astar/ check
+                from astar.astar_traversability_check import astar_console_report
+                print(astar_console_report(composed_scene))
+                return
             level = self.get_sample_output(composed_scene, use_snes_graphics=self.use_snes_graphics.get())
             console_output = level.run_astar()
             print(console_output)
@@ -745,7 +750,11 @@ class ImageGridViewer:
             level.play()
 
     def _run_astar_agent(self, genome):
-        # level = self.get_sample_output(genome.scene)
+        if self.args.game == "MM":
+            # No Java sim for Mario Maker, use the Python astar/ check
+            from astar.astar_traversability_check import astar_console_report
+            print(astar_console_report(genome.scene))
+            return
         level = self.get_sample_output(genome.scene, use_snes_graphics=self.use_snes_graphics.get())
         console_output = level.run_astar()
         print(console_output)

@@ -799,9 +799,10 @@ Average Segment Score: {avg_segment_score}"""
     def astar_composed_level(self):
         scene = self.merge_selected_scenes()
         if scene:
-            level = self.get_sample_output(scene, use_snes_graphics=self.use_snes_graphics.get())
-            console_output = level.run_astar()
-            print(console_output)
+            # Mario Maker only, so always use the Python astar/ check
+            from astar.astar_traversability_check import astar_console_report
+            print(astar_console_report(scene, id_to_char=self.id_to_char,
+                                       tile_descriptors=self.tile_descriptors))
 
     def get_sample_output(self, idx_or_scene, use_snes_graphics=False):
         if isinstance(idx_or_scene, int):
@@ -904,9 +905,13 @@ Average Segment Score: {avg_segment_score}"""
         refs["image_label"].image = tk_img
 
     def use_astar(self, idx):
-        level = self.get_sample_output(idx, use_snes_graphics=self.use_snes_graphics.get())
-        console_output = level.run_astar()
-        print(console_output)
+        if idx < len(self.generated_scenes):
+            scene = self.generated_scenes[idx]
+        else:
+            scene = torch.argmax(torch.tensor(self.current_levels[idx]), dim=0).numpy().tolist()
+        from astar.astar_traversability_check import astar_console_report
+        print(astar_console_report(scene, id_to_char=self.id_to_char,
+                                   tile_descriptors=self.tile_descriptors))
 
     def uncheck_all(self):
         """Uncheck all checkboxes in the provided list or dict."""
