@@ -3,6 +3,11 @@ from enum import Enum
 # Extra space added at the start and end of levels (LevelParser.BUFFER_WIDTH)
 BUFFER_WIDTH = 15
 
+# Deadly static hazard (spikes, saws, ...). Kept distinct from solid so the agent can
+# neither pass through it nor come to rest on top of it. Outside the 0-12 SMB id range
+# so real Mario tiles are never mistaken for it.
+HAZARD = 13
+
 LENIENCY_TILES = {
     0: 0.0,    # solid
     1: 0.0,    # breakable
@@ -17,6 +22,7 @@ LENIENCY_TILES = {
     10: -1.0,  # green koopas + paratroopas
     11: -1.0,  # red koopas + paratroopas
     12: -1.0,  # spiny + winged spiny
+    13: 0.0,   # static hazard (spikes/saws)
 }
 
 
@@ -34,6 +40,7 @@ NEGATIVE_SPACE_TILES = {
     10: 0,  # green koopas + paratroopas
     11: 0,  # red koopas + paratroopas
     12: 0,  # spiny + winged spiny
+    13: 1,  # static hazard occupies space (non-passable)
 }
 
 
@@ -138,6 +145,9 @@ class MarioState:
         tile = self.tileAtPosition(x, y)
         return NEGATIVE_SPACE_TILES.get(tile) == 0 and LENIENCY_TILES.get(tile) == 0
 
+    def is_hazard(self, x, y):
+        return self.inBounds(x, y) and self.tileAtPosition(x, y) == HAZARD
+
     def get_successor(self, action):
         """Return the next state, or None if the action is not legal here."""
         newJumpVelocity = self.jumpVelocity
@@ -181,6 +191,10 @@ class MarioState:
                 return None
 
         if not self.inBounds(newMarioX, newMarioY):
+            return None
+
+        # Coming to rest on a static hazard (spikes, ...) is death -- prune the state
+        if newJumpVelocity == 0 and self.is_hazard(newMarioX, newMarioY + 1):
             return None
 
         return MarioState(self.level, newJumpVelocity, newMarioX, newMarioY)

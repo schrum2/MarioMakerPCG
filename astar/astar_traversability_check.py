@@ -27,7 +27,7 @@ for _p in (_HERE, _REPO_ROOT):
 from captions.util import extract_tileset
 import util.common_settings as common_settings
 from AStarSearch import AStarSearch
-from MarioState import MarioState, BUFFER_WIDTH
+from MarioState import MarioState, BUFFER_WIDTH, HAZARD
 import LodeRunnerState as lr
 from LodeRunnerState import LodeRunnerState
 import MegaManState as mm
@@ -49,12 +49,15 @@ DEFAULT_TILESETS = {
 # corresponding state file expects.
 # ---------------------------------------------------------------------------
 def mario_tile(descs):
-    """MarioState only distinguishes passable vs blocking. Anything walkable-through
-    (empty, coins) plus enemies -> passable(2); everything else (ground, pipes, blocks)
-    -> solid(0). Those are the only two ids MarioState's passability tables need to
-    behave correctly. Enemies are treated as passable (the agent is assumed to deal
-    with them) rather than as solid obstacles."""
-    return 2 if ("passable" in descs or "enemy" in descs) else 0
+    """Map descriptors to the three ids MarioState needs: passable(2), solid(0) or HAZARD.
+    Empty/coins/power-ups plus enemies -> passable (the agent is assumed to deal with
+    enemies). Static damaging tiles (spikes, saws, ...) -> HAZARD, which can't be passed
+    through or stood on. Everything else (ground, pipes, blocks) -> solid."""
+    if "passable" in descs or "enemy" in descs:
+        return 2
+    if "hazard" in descs or "damaging" in descs:
+        return HAZARD
+    return 0
 
 
 def lr_tile(descs):
@@ -142,7 +145,8 @@ def mario_traversable(scene, id_to_char, descs, budget, visualize=False):
     def standable(y):
         return (scanner.passable(0, y)
                 and scanner.inBounds(0, y + 1)
-                and not scanner.passable(0, y + 1))
+                and not scanner.passable(0, y + 1)
+                and not scanner.is_hazard(0, y + 1))
     starts = [MarioState(grid, 0, 0, y) for y in reversed(range(height)) if standable(y)]
     if not starts:
         starts = [MarioState.from_level(grid)]   # default Mario spawn: bottom-left
