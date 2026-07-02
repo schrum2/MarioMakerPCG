@@ -16,35 +16,50 @@ from collections import defaultdict
 
 class BucketBatchSampler:
     """
-    Groups dataset samples into batches by scene size so that every batch contains
-    same-shape scenes. This allows training on datasets with variable-size scenes
-    since torch.stack requires uniform shapes within a batch.
+    Groups dataset samples into batches by overall scene shape (height, width) so that
+    every batch contains same-shape scenes. This allows training on datasets with
+    variable-size scenes since torch.stack requires uniform shapes within a batch.
+
+    Bucketing by full (height, width) is the default. A dataset whose scenes all share
+    a height (the common fixed-height case) collapses to the same width-keyed buckets
+    this used to produce, so the behaviour is unchanged there; mixed-height complete
+    levels (see LevelDataset bucket_levels) are now handled too.
 
     Args:
         dataset: A LevelDataset whose samples are (scene_tensor, ...) with scene shape (Channels, H, W)
         batch_size (int): Number of samples per batch
-        drop_last (bool): If True, discard incomplete batches at the end of each size bucket
+        drop_last (bool): If True, discard incomplete batches at the end of each shape bucket
         shuffle (bool): If True, shuffle samples within buckets and shuffle the batch order
 
     Attributes:
-        shapes (list[int]): Each unique level width present in the dataset, used for generating
-            samples of different size at epoch benchmarks during training.
+        shapes (list[tuple[int, int]]): Each unique scene shape (height, width) present in the
+            dataset, used for generating samples of different size at epoch benchmarks during training.
     """
     def __init__(self, dataset, batch_size, drop_last=True, shuffle=True):
         self.shuffle = shuffle
-        # Group dataset indices by scene size (height, width), so mixed-height buckets stack too
+        # Group dataset indices by overall scene shape (height, width).
+        # When the dataset already exposes a per-index pad plan (bucket_levels), read the
+        # bucket shape directly to avoid materialising/padding every scene just to size it.
+        pad_size = getattr(dataset, "pad_size", None)
         buckets = defaultdict(list)
         for idx in range(len(dataset)):
-            _, h, w = dataset[idx][0].shape  # scene tensor is (C, H, W)
-            buckets[(h, w)].append(idx)
+            if pad_size is not None:
+                key = pad_size[idx]  # (pad_h, pad_w)
+            else:
+                shape = dataset[idx][0].shape  # scene tensor is (C, H, W)
+                key = (shape[1], shape[2])
+            buckets[key].append(idx)
 
         self.batches = []
         for indices in buckets.values():
             for i in range(0, len(indices), batch_size):
                 batch = indices[i:i + batch_size]
+                # Skip incomplete batches at the tail of each bucket when drop_last is set
+                if drop_last and len(batch) < batch_size:
                 # Skip incomplete batches at the tail of each bucket when drop_last is set,
                 # but keep the sole batch of a bucket smaller than batch_size (small datasets)
-                if drop_last and len(batch) < batch_size and len(indices) > batch_size:
+                # Jacob: Was this needed to avoid a weird error with empbt batches? We'll find out!
+                #if drop_last and len(batch) < batch_size and len(indices) > batch_size:
                     continue
                 self.batches.append(batch)
 
@@ -69,6 +84,7 @@ class BucketBatchSampler:
 def create_dataloaders(json_path, val_json, tokenizer, data_mode, augment, num_tiles,
                        negative_prompt_training, block_embeddings, batch_size,
                        persistent_workers=True, multiple_captions=False, require_captions=True,
+                       bucket_levels=False, num_buckets=5, pad_tile_id=None, unet_factor=1,
                        num_workers=4, pin_memory=False):
     """
     Create PyTorch dataloaders for training and validation datasets.
@@ -89,11 +105,16 @@ def create_dataloaders(json_path, val_json, tokenizer, data_mode, augment, num_t
             augmentation. Validation always uses the canonical "caption" deterministically.
         require_captions (bool): True for text-conditional training (every item must have a
             "caption"); False for unconditional training, where scenes carry no captions.
+        bucket_levels (bool): If True, scenes are variable-size complete levels that get grouped
+            into num_buckets size buckets and padded to each bucket's shared shape (see LevelDataset).
+        num_buckets (int): Number of size buckets when bucket_levels is set.
+        pad_tile_id (int): Tile id used to fill the pad region (null/void tile); required for bucketing.
+        unet_factor (int): Bucket pad dimensions are rounded up to a multiple of this (UNet divisor).
 
     Returns:
-        tuple(train_dataloader, val_dataloader, sample_widths): where sample_widths is the
-            list of unique scene widths in the training set, used to generate variably-sized
-            benchmark samples at epoch checkpoints.
+        tuple(train_dataloader, val_dataloader, sample_shapes): where sample_shapes is the
+            list of unique scene shapes (height, width) in the training set, used to generate
+            variably-sized benchmark samples at epoch checkpoints.
     """
 
     # Initialize dataset
@@ -107,7 +128,11 @@ def create_dataloaders(json_path, val_json, tokenizer, data_mode, augment, num_t
         negative_captions=negative_prompt_training,
         block_embeddings=block_embeddings,
         multiple_captions=multiple_captions,
-        require_captions=require_captions
+        require_captions=require_captions, 
+        bucket_levels=bucket_levels,
+        num_buckets=num_buckets,
+        pad_tile_id=pad_tile_id,
+        unet_factor=unet_factor
     )
     val_dataset = None
     if val_json is not None:
@@ -120,10 +145,14 @@ def create_dataloaders(json_path, val_json, tokenizer, data_mode, augment, num_t
             num_tiles=num_tiles,
             negative_captions=negative_prompt_training,
             block_embeddings=block_embeddings,
-            require_captions=require_captions
+            require_captions=require_captions, 
+            bucket_levels=bucket_levels,
+            num_buckets=num_buckets,
+            pad_tile_id=pad_tile_id,
+            unet_factor=unet_factor
         )
 
-    # BucketBatchSampler groups same-size scenes into each batch, allowing mixed-size datasets.
+    # BucketBatchSampler groups same-width scenes into each batch, allowing mixed-width datasets.
     # batch_size/shuffle/drop_last are owned by the sampler, not passed directly to DataLoader.
     train_sampler = BucketBatchSampler(train_dataset, batch_size, drop_last=True, shuffle=True)
     train_dataloader = DataLoader(

@@ -84,7 +84,10 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=32, help="Training batch size") # TODO: Consider reducing to 16 to help generalization
     parser.add_argument("--augment", action="store_true", help="Enable data augmentation")
     parser.add_argument("--multiple_captions", action="store_true", help="Each sample stores several captions ('caption', 'caption1', ...); select one at random per access instead of phrase-shuffle augmentation. This becomes the only augmentation (phrase shuffling and scene flipping are disabled).")
-    
+    parser.add_argument("--complete_levels", action="store_true", help="Treat scenes as variable-size complete levels: group them into --num_buckets size buckets and pad each up to its bucket's shared shape with the null/void tile (--pad_tile_id). Use with datasets built via 'create_megaman_json_data.py --scan_mode whole'.")
+    parser.add_argument("--num_buckets", type=int, default=5, help="Number of size buckets when --complete_levels is set.")
+    parser.add_argument("--pad_tile_id", type=int, default=None, help="Tile id used to fill the pad region under --complete_levels (the null/void tile). Defaults to the 'null'-descriptor tile resolved from --tileset.")
+
     # New text conditioning args
     parser.add_argument("--mlm_model_dir", type=str, default="mlm", help="Path to pre-trained text embedding model")
     parser.add_argument("--pretrained_language_model", type=str, default=None, help="Link to a pre-trained language model, everything after huggingface.co/. This will override the mlm_model_dir argument.")
@@ -401,10 +404,10 @@ def main():
     text_encoder = None
     tokenizer_hf = None #We don't need the huggingface tokenizer if we're using our own, varible initialization done to avoid future errors
     if args.text_conditional and args.pretrained_language_model: #Default to huggingface model, if it exists
-        text_encoder = AutoModel.from_pretrained(args.pretrained_language_model, trust_remote_code=True).to(accelerator.device)
+        # Shared loader handles mean-pooled encoders (MiniLM, GTE) and the CLIP text tower.
+        text_encoder, tokenizer_hf, model_embedding_dim = st_helper.load_pretrained_encoder(
+            args.pretrained_language_model, accelerator.device)
         text_encoder.eval() # Set to evaluation mode
-        model_embedding_dim = text_encoder.config.hidden_size# Done here to allow for cross-functionality with the mlm model
-        tokenizer_hf = AutoTokenizer.from_pretrained(args.pretrained_language_model)
         print(f"Loaded text encoder from {args.pretrained_language_model}")
     elif args.text_conditional and args.mlm_model_dir:
         text_encoder = TransformerModel.from_pretrained(args.mlm_model_dir).to(accelerator.device)
