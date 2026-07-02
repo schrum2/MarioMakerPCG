@@ -1,6 +1,59 @@
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, CLIPTokenizer, CLIPTextModelWithProjection, T5EncoderModel, T5Tokenizer
 import torch
 import torch.nn.functional as F
+
+# CLIP is distributed by sentence-transformers as a packaged model whose weights live in a
+# submodule, so AutoModel.from_pretrained can't load it directly. The CLIP text tower itself is
+# just the standard transformers CLIP text encoder, so we map the sentence-transformers names
+# (and accept the underlying openai/* repos) onto CLIPTextModelWithProjection.
+_CLIP_REPO_MAP = {
+    "sentence-transformers/clip-vit-l-14": "openai/clip-vit-large-patch14",
+    "sentence-transformers/clip-vit-b-32": "openai/clip-vit-base-patch32",
+    "sentence-transformers/clip-vit-b-16": "openai/clip-vit-base-patch16",
+}
+
+
+def is_clip_model(model_name):
+    """True if the requested pretrained text encoder is a CLIP text tower."""
+    return "clip" in model_name.lower()
+
+
+def resolve_clip_repo(model_name):
+    """Map a (sentence-transformers or openai) CLIP name onto a transformers-loadable repo."""
+    return _CLIP_REPO_MAP.get(model_name.lower(), model_name)
+
+
+def is_t5_model(model_name):
+    """True if the requested pretrained text encoder is a T5 encoder stack."""
+    return "t5" in model_name.lower()
+
+
+def load_pretrained_encoder(model_name, device='cpu'):
+    """Load a pretrained text encoder + its tokenizer and report its embedding dimension.
+
+    Handles the mean-pooled sentence encoders (MiniLM, GTE) loaded via AutoModel, the CLIP text
+    tower (CLIPTextModelWithProjection), and the T5 encoder stack. Returns (model, tokenizer, dim)
+    so both train_diffusion.py and the pipeline's from_pretrained share one loading path.
+    """
+    if is_clip_model(model_name):
+        repo = resolve_clip_repo(model_name)
+        model = CLIPTextModelWithProjection.from_pretrained(repo).to(device)
+        tokenizer = CLIPTokenizer.from_pretrained(repo)
+        embedding_dim = model.config.projection_dim
+    elif is_t5_model(model_name):
+        # AutoModel would load the full encoder-decoder T5Model, whose forward needs
+        # decoder_input_ids; we only want the encoder tower. encode()'s mean-pooling branch
+        # then handles its last_hidden_state like any other sentence encoder.
+        model = T5EncoderModel.from_pretrained(model_name).to(device)
+        tokenizer = T5Tokenizer.from_pretrained(model_name)
+        embedding_dim = model.config.d_model
+    else:
+        model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(device)
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        embedding_dim = model.config.hidden_size
+    model.eval()
+    return model, tokenizer, embedding_dim
+
 
 #Mean Pooling - Take average of all tokens
 def mean_pooling(model_output, attention_mask):
@@ -17,14 +70,18 @@ def encode(texts, tokenizer, model, device='cpu'):
 
     # Compute token embeddings
     with torch.no_grad():
-        model_output = model(**encoded_input, return_dict=True)
-
-    # Perform pooling
-    embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
+        if isinstance(model, CLIPTextModelWithProjection):
+            # CLIP's sentence embedding is the projected pooled (EOS) token, not a mean pool.
+            model_output = model(**encoded_input)
+            embeddings = model_output.text_embeds
+        else:
+            model_output = model(**encoded_input, return_dict=True)
+            # Perform pooling
+            embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
 
     # Normalize embeddings
     embeddings = F.normalize(embeddings, p=2, dim=1)
-    
+
     embeddings = embeddings.to(device)
 
     return embeddings
