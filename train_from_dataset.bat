@@ -42,6 +42,7 @@ echo y> "%YES_FILE%"
 REM Wipe prior model folders so training never fails on an existing dir.
 if exist "%MLM_DIR%" rd /s /q "%MLM_DIR%"
 if exist "%DIFF_DIR%" rd /s /q "%DIFF_DIR%"
+if exist "%GEN_DIR%" rd /s /q "%GEN_DIR%"
 
 echo.
 echo === [1/5] simple presence captions -> dataset_captioned.json ===
@@ -57,7 +58,7 @@ if errorlevel 1 goto error
 
 echo.
 echo === [3/5] training MLM text encoder ===
-%PY% train_mlm.py --json "%BASE%-train.json" --val_json "%BASE%-validate.json" --pkl "%TOKENIZER%" --output_dir "%MLM_DIR%" --max_seq_length 128 --seed %SEED%
+%PY% train_mlm.py --json "%BASE%-train.json" --val_json "%BASE%-validate.json" --pkl "%TOKENIZER%" --output_dir "%MLM_DIR%" --max_seq_length 128 --final_eval --seed %SEED%
 if errorlevel 1 goto error
 
 echo.
