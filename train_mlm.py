@@ -223,9 +223,9 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs,
         }
         with open(os.path.join(args.output_dir, "best_model_info.json"), "w") as f:
             json.dump(best_model_info, f, indent=4)
-    
+
     evaluate_model(model, tokenizer, train_loader, device, console_output = False)
-    
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=300, help="Number of training epochs")
@@ -236,6 +236,7 @@ if __name__ == "__main__":
     parser.add_argument("--test_json", type=str, default=None, help="Optional path to testing dataset json file (used at end of training)")
     parser.add_argument("--embedding_dim", type=int, default=128, help="Length of text embedding vectors")
     parser.add_argument("--hidden_dim", type=int, default=256, help="Units in hidden layers")
+    parser.add_argument("--max_seq_length", type=int, default=100, help="Maximum caption length in tokens. Captions longer than this abort training with 'exceeds specified length'; raise it if you hit that.")
     parser.add_argument("--batch_size", type=int, default=16, help="Training samples per batch")
     parser.add_argument("--data_limit", type=int, default=-1, help="If not negative, only train with this many examples")
     parser.add_argument("--output_dir", type=str, default="mlm", help="Directory for training logs and model")
@@ -294,7 +295,7 @@ if __name__ == "__main__":
     embedding_dim = args.embedding_dim
     hidden_dim = args.hidden_dim
     
-    model = TransformerModel(vocab_size, embedding_dim, hidden_dim, tokenizer).to(device)
+    model = TransformerModel(vocab_size, embedding_dim, hidden_dim, tokenizer, max_seq_length=args.max_seq_length).to(device)
     
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.token_to_id["[PAD]"])
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)

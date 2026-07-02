@@ -92,8 +92,9 @@ class FDMPipeline():
                 with open(os.path.join(text_encoder_path, "loading_info.json"), "r") as f:
                     encoder_config = json.load(f)
 
-                text_encoder = AutoModel.from_pretrained(encoder_config['text_encoder_name'], trust_remote_code=True)
-                tokenizer = AutoTokenizer.from_pretrained(encoder_config['tokenizer_name'])
+                # Shared loader so CLIP/T5 reload as their text tower (CLIPTextModelWithProjection /
+                # T5EncoderModel), not the full CLIPModel/T5Model AutoModel would give back.
+                text_encoder, tokenizer, _ = st_helper.load_pretrained_encoder(encoder_config['text_encoder_name'])
             
             #Legacy loading system, loads models directly if the whole thing is saved in the directory
             else:

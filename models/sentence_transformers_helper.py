@@ -1,4 +1,4 @@
-from transformers import AutoTokenizer, AutoModel, CLIPTokenizer, CLIPTextModelWithProjection, T5EncoderModel, T5Tokenizer
+from transformers import AutoTokenizer, AutoModel, CLIPTokenizer, CLIPTextModelWithProjection, T5EncoderModel
 import torch
 import torch.nn.functional as F
 
@@ -40,17 +40,29 @@ def load_pretrained_encoder(model_name, device='cpu'):
         model = CLIPTextModelWithProjection.from_pretrained(repo).to(device)
         tokenizer = CLIPTokenizer.from_pretrained(repo)
         embedding_dim = model.config.projection_dim
+        # CLIPTextConfig is pulled from the parent CLIPConfig's text_config sub-dict, so it
+        # never picks up _name_or_path; stamp the resolved repo back on so save/reload can
+        # find this same tower again (see load path in the diffusion pipelines).
+        reload_name = repo
     elif is_t5_model(model_name):
         # AutoModel would load the full encoder-decoder T5Model, whose forward needs
         # decoder_input_ids; we only want the encoder tower. encode()'s mean-pooling branch
         # then handles its last_hidden_state like any other sentence encoder.
         model = T5EncoderModel.from_pretrained(model_name).to(device)
-        tokenizer = T5Tokenizer.from_pretrained(model_name)
+        # AutoTokenizer picks the fast (tokenizers-backed) T5 tokenizer, avoiding a hard
+        # SentencePiece dependency that the slow T5Tokenizer would force.
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
         embedding_dim = model.config.d_model
+        reload_name = model_name
     else:
         model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(device)
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         embedding_dim = model.config.hidden_size
+        reload_name = model_name
+    # Record the name the pipelines write to loading_info.json. The mean-pooled encoders carry
+    # their repo id in config.name_or_path already, but CLIP/T5 come back with it blank, which
+    # would otherwise save an empty encoder name and fail to reload.
+    model.config.name_or_path = reload_name
     model.eval()
     return model, tokenizer, embedding_dim
 

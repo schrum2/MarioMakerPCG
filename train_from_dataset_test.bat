@@ -10,7 +10,9 @@ REM Usage: train_from_dataset_test.bat <dataset.json>
 REM ===========================================================================
 cd /d "%~dp0"
 
-set PY=python
+REM Full path to the SURF conda python. Bare "python" can resolve to the
+REM Windows Store stub in some shells; the absolute path avoids that.
+set PY="C:\Users\mckeonp\AppData\Local\miniconda3\envs\SURF\python.exe"
 set DATASET=%~1
 if "%DATASET%"=="" (
     echo Usage: %~nx0 ^<dataset.json^>
@@ -20,7 +22,7 @@ for %%I in ("%DATASET%") do set "DATASET=%%~fI"
 
 set TILESET=mm2_tileset_we.json
 set GAME=MM
-set NUM_TILES=69
+set NUM_TILES=68
 set SEED=0
 set EPOCHS=2
 
@@ -36,6 +38,10 @@ REM Auto-answer "y" to train_diffusion.py's resume-from-checkpoint prompt.
 set YES_FILE=%TEMP%\train_from_dataset_test_yes.txt
 echo y> "%YES_FILE%"
 
+REM Wipe prior model folders so training never fails on an existing dir.
+if exist "%MLM_DIR%" rd /s /q "%MLM_DIR%"
+if exist "%DIFF_DIR%" rd /s /q "%DIFF_DIR%"
+
 echo.
 echo === [1/6] simple presence captions -> dataset_captioned.json ===
 %PY% MarioMaker_create_ascii_captions.py --dataset "%DATASET%" --tileset %TILESET% --output "%CAPTIONED%"
@@ -50,7 +56,7 @@ if errorlevel 1 goto error
 
 echo.
 echo === [3/6] training MLM text encoder (%EPOCHS% epochs - TEST) ===
-%PY% train_mlm.py --json "%BASE%-train.json" --val_json "%BASE%-validate.json" --pkl "%TOKENIZER%" --output_dir "%MLM_DIR%" --epochs %EPOCHS% --seed %SEED%
+%PY% train_mlm.py --json "%BASE%-train.json" --val_json "%BASE%-validate.json" --pkl "%TOKENIZER%" --output_dir "%MLM_DIR%" --max_seq_length 128 --epochs %EPOCHS% --seed %SEED%
 if errorlevel 1 goto error
 
 echo.
