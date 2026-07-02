@@ -28,15 +28,14 @@ set SEED=0
 set WINDOW=20
 set STRIDE=20
 
-REM Output next to the ascii file (%%~dpI keeps the trailing backslash).
 for %%I in ("%ASCII%") do set "OUTDIR=%%~dpI"
-set DATASET=%OUTDIR%dataset.json
-set CAPTIONED=%OUTDIR%dataset_captioned.json
+set DATASET=dataset.json
+set CAPTIONED=dataset_captioned.json
 set BASE=%CAPTIONED:.json=%
-set TOKENIZER=%OUTDIR%dataset_tokenizer.pkl
-set MLM_DIR=%OUTDIR%mlm
-set DIFF_DIR=%OUTDIR%diffusion
-set GEN_DIR=%OUTDIR%generated
+set TOKENIZER=dataset_tokenizer.pkl
+set MLM_DIR=mlm
+set DIFF_DIR=diffusion
+set GEN_DIR=generated
 
 REM Auto-answer "y" to train_diffusion.py's resume-from-checkpoint prompt.
 set YES_FILE=%TEMP%\train_from_ascii_yes.txt

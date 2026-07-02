@@ -1,4 +1,4 @@
-@echo off
+REM @echo off
 setlocal
 REM ===========================================================================
 REM train_from_dataset.bat  --  same pipeline as train_from_ascii.bat but skips
@@ -26,14 +26,13 @@ set GAME=MM
 set NUM_TILES=68
 set SEED=0
 
-REM Output next to the dataset (%%~dpI keeps the trailing backslash).
 for %%I in ("%DATASET%") do set "OUTDIR=%%~dpI"
-set CAPTIONED=%OUTDIR%dataset_captioned.json
+set CAPTIONED=dataset_captioned.json
 set BASE=%CAPTIONED:.json=%
-set TOKENIZER=%OUTDIR%dataset_tokenizer.pkl
-set MLM_DIR=%OUTDIR%mlm
-set DIFF_DIR=%OUTDIR%diffusion
-set GEN_DIR=%OUTDIR%generated
+set TOKENIZER=dataset_tokenizer.pkl
+set MLM_DIR=mlm
+set DIFF_DIR=diffusion
+set GEN_DIR=generated
 
 REM Auto-answer "y" to train_diffusion.py's resume-from-checkpoint prompt.
 set YES_FILE=%TEMP%\train_from_dataset_yes.txt

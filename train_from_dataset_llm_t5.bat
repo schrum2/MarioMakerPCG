@@ -33,12 +33,12 @@ REM Frozen pretrained T5 text encoder (no MLM training needed). Swap for t5-smal
 REM (lighter) or google/flan-t5-base, etc.
 set TEXT_ENCODER=t5-base
 
-REM Outputs land next to the dataset. Split writes <dataset>-train.json etc.
+REM Split writes <dataset>-train.json etc. next to the dataset.
 for %%I in ("%DATASET%") do set "OUTDIR=%%~dpI"
 set BASE=%DATASET:.json=%
-set TOKENIZER=%OUTDIR%dataset_tokenizer_t5.pkl
-set DIFF_DIR=%OUTDIR%diffusion_t5
-set GEN_DIR=%OUTDIR%generated_t5
+set TOKENIZER=dataset_tokenizer_t5.pkl
+set DIFF_DIR=diffusion_t5
+set GEN_DIR=generated_t5
 
 REM Auto-answer "y" to train_diffusion.py's resume-from-checkpoint prompt.
 set YES_FILE=%TEMP%\train_from_dataset_t5_yes.txt

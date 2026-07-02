@@ -32,12 +32,12 @@ REM Frozen pretrained CLIP text encoder (no MLM training needed). Swap for the
 REM b-32/b-16 variants (or an openai/clip-* repo) to trade quality for size.
 set TEXT_ENCODER=sentence-transformers/clip-vit-l-14
 
-REM Outputs land next to the dataset. Split writes <dataset>-train.json etc.
+REM Split writes <dataset>-train.json etc. next to the dataset.
 for %%I in ("%DATASET%") do set "OUTDIR=%%~dpI"
 set BASE=%DATASET:.json=%
-set TOKENIZER=%OUTDIR%dataset_tokenizer_clip.pkl
-set DIFF_DIR=%OUTDIR%diffusion_clip
-set GEN_DIR=%OUTDIR%generated_clip
+set TOKENIZER=dataset_tokenizer_clip.pkl
+set DIFF_DIR=diffusion_clip
+set GEN_DIR=generated_clip
 
 REM Auto-answer "y" to train_diffusion.py's resume-from-checkpoint prompt.
 set YES_FILE=%TEMP%\train_from_dataset_clip_yes.txt
