@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import argparse
+from collections import Counter
 
 # Tags used to describe tile properties rather than identity; everything in a
 # tile's tag list other than these is treated as part of its name.
@@ -16,16 +17,17 @@ PROPERTY_TAGS = {
 # Tiles that represent empty space and should never appear in a caption.
 EMPTY_TAGS = {"empty", "air"}
 
-# Per-level metadata fields (folded into each dataset entry by
-# build_dataset_with_ascii.py from the export's metadata.json) that get added to
-# the caption, paired with the word that turns the raw value into a phrase.
-# level_name is intentionally left out: it names the source level, not anything
-# about its contents.
+# Level metadata fields to fold into the caption, paired with the word that
+# turns the raw value into a phrase. level_name is left out on purpose - it names
+# the source level, not its contents.
 CAPTION_METADATA_FIELDS = [
     ("gamestyle", "style"),
     ("theme", "theme"),
     ("difficulty", "difficulty"),
 ]
+
+# A same-tile contiguous region at least this big gets called a blob.
+BLOB_THRESHOLD = 10
 
 
 def metadata_phrases(item):
@@ -53,15 +55,9 @@ def build_id_to_char(tileset_path):
 
 
 def get_char_names(tileset_path):
-    """Derive char -> human-readable name directly from the tileset file.
-
-    Each tile's value is a tag list whose trailing entries are its name (e.g.
-    ["passable", "collectable", "coin"] -> "Coin"). Reading names straight from
-    the tileset keeps captions aligned with whatever tileset is passed in,
-    instead of a hardcoded table that can silently disagree with the file's
-    actual char assignments (e.g. "c" = coin here vs. "Clear Pipe" in the full
-    set).
-    """
+    """Map each tile char to a readable name read straight from its tag list, so
+    names track whatever tileset is passed in (e.g. ["passable", "collectable",
+    "coin"] -> "Coin")."""
     with open(tileset_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -69,9 +65,9 @@ def get_char_names(tileset_path):
     for char, tags in data["tiles"].items():
         if not tags or any(t in EMPTY_TAGS for t in tags):
             continue
-        # The name is the last tag. A tile can carry a category word ahead of it
-        # (Bowser is [..., "boss", "bowser"]), so take the last non-property tag
-        # rather than the first, or every boss ends up named "boss".
+        # The name is the last non-property tag. Some tiles carry a category word
+        # ahead of the name (Bowser is [..., "boss", "bowser"]), so taking the
+        # last tag keeps every boss from being named "boss".
         name_tags = [t for t in tags if t not in PROPERTY_TAGS]
         name = name_tags[-1] if name_tags else tags[-1]
         char_names[char] = name.title()
@@ -97,23 +93,60 @@ def get_tile_categories(tileset_path):
 
 
 def describe_quantity(count):
-    # Same coarse buckets MarioDiffusion's caption code uses.
+    # Coarse buckets like MarioDiffusion's, with a top "a ton of" tier and the
+    # thresholds bumped up for the bigger Mario Maker scenes.
     if count == 1:
         return "one"
     if count == 2:
         return "two"
-    if count < 5:
+    if count < 6:
         return "a few"
-    if count < 10:
+    if count < 12:
         return "several"
-    return "many"
+    if count < 30:
+        return "many"
+    return "a ton of"
 
 
-def count_phrase(count, singular, plural):
+def pluralize(name):
+    return name if name.endswith("s") else name + "s"
+
+
+def count_phrase(count, name):
     if count <= 0:
         return None
-    noun = plural if count > 1 else singular
+    noun = pluralize(name) if count > 1 else name
     return f"{describe_quantity(count)} {noun}".capitalize()
+
+
+def largest_blobs(scene, id_to_char):
+    """Largest contiguous same-tile region for each tile char, found by flood
+    fill over 4-connected neighbours."""
+    height = len(scene)
+    width = len(scene[0]) if height else 0
+    visited = set()
+    biggest = {}
+    for r in range(height):
+        for c in range(width):
+            if (r, c) in visited:
+                continue
+            char = id_to_char.get(scene[r][c])
+            if char is None:
+                continue
+            stack = [(r, c)]
+            size = 0
+            while stack:
+                y, x = stack.pop()
+                if (y, x) in visited or not (0 <= y < height and 0 <= x < width):
+                    continue
+                if id_to_char.get(scene[y][x]) != char:
+                    continue
+                visited.add((y, x))
+                size += 1
+                stack += [(y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)]
+            if size > biggest.get(char, 0):
+                biggest[char] = size
+    return biggest
 
 
 def describe_ground(scene, id_to_char, ground_chars):
@@ -140,37 +173,32 @@ def describe_ground(scene, id_to_char, ground_chars):
     return f"Ground floor with {describe_quantity(gaps)} gap" + ("s" if gaps > 1 else "")
 
 
-def assign_caption(scene, id_to_char, char_names, enemy_chars, item_chars,
-                   ground_chars, meta_phrases=None):
-    # Metadata, then the distinct tiles present, then the ground and how many
-    # enemies and items there are, e.g. "SMB1 style. Goomba. Coin. Full ground
-    # floor. A few enemies. Several items."
+def assign_caption(scene, id_to_char, char_names, ground_chars=None,
+                   meta_phrases=None):
+    # Metadata, the ground summary, then a count of every tile type present, and
+    # a note for any type that piles up into a blob, e.g. "SMB1 style. Full
+    # ground floor. Two goombas. A few coins. A blob of coins."
+    ground_chars = ground_chars or set()
     phrases = list(meta_phrases) if meta_phrases else []
 
-    enemy_count = 0
-    item_count = 0
-    seen = set()
+    ground_phrase = describe_ground(scene, id_to_char, ground_chars)
+    if ground_phrase:
+        phrases.append(ground_phrase)
+
+    # Ground is covered by the floor phrase, so leave it out of the tile counts.
+    counts = Counter()
     for row in scene:
         for tile_id in row:
             char = id_to_char.get(tile_id)
-            if char is None:
-                continue
-            if char in enemy_chars:
-                enemy_count += 1
-            if char in item_chars:
-                item_count += 1
-            if char in ground_chars:
-                continue  # Ground is covered by the floor phrase below.
-            name = char_names.get(char)
-            if name and name not in seen:
-                seen.add(name)
-                phrases.append(name)
+            if char and char not in ground_chars and char in char_names:
+                counts[char] += 1
 
-    for phrase in (describe_ground(scene, id_to_char, ground_chars),
-                   count_phrase(enemy_count, "enemy", "enemies"),
-                   count_phrase(item_count, "item", "items")):
-        if phrase:
-            phrases.append(phrase)
+    blobs = largest_blobs(scene, id_to_char)
+    for char, count in counts.items():
+        name = char_names[char]
+        phrases.append(count_phrase(count, name))
+        if blobs.get(char, 0) >= BLOB_THRESHOLD:
+            phrases.append(f"a blob of {pluralize(name)}".capitalize())
 
     return " ".join(f"{p}." for p in phrases)
 
@@ -181,15 +209,15 @@ def generate_captions(dataset_path, tileset_path, output_path):
 
     id_to_char = build_id_to_char(tileset_path)
     char_names = get_char_names(tileset_path)
-    enemy_chars, item_chars, ground_chars = get_tile_categories(tileset_path)
+    _, _, ground_chars = get_tile_categories(tileset_path)
 
     captioned = []
     for item in dataset:
         is_dict = isinstance(item, dict)
         scene = item["scene"] if is_dict else item
         meta_phrases = metadata_phrases(item) if is_dict else []
-        caption = assign_caption(scene, id_to_char, char_names, enemy_chars,
-                                 item_chars, ground_chars, meta_phrases)
+        caption = assign_caption(scene, id_to_char, char_names, ground_chars,
+                                 meta_phrases)
         entry = {"scene": scene, "caption": caption}
         if isinstance(item, dict):
             if "name" in item:
@@ -205,7 +233,7 @@ def generate_captions(dataset_path, tileset_path, output_path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Simple captions for MM2 ASCII datasets: tiles present, a ground/floor summary, and enemy/item counts.")
+    parser = argparse.ArgumentParser(description="Captions for MM2 ASCII datasets: a ground/floor summary plus per-tile counts and blob callouts.")
     parser.add_argument("--dataset", required=True, help="Input dataset JSON.")
     parser.add_argument("--tileset", required=True, help="Tileset JSON (e.g. mm2_tileset_we.json); names are read from its tile tags.")
     parser.add_argument("--output", required=True, help="Output captioned JSON.")
