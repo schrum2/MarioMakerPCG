@@ -58,7 +58,7 @@ if errorlevel 1 goto error
 
 echo.
 echo === [3/5] training MLM text encoder ===
-%PY% train_mlm.py --json "%BASE%-train.json" --val_json "%BASE%-validate.json" --pkl "%TOKENIZER%" --output_dir "%MLM_DIR%" --max_seq_length 128 --final_eval --seed %SEED%
+%PY% train_mlm.py --json "%BASE%-train.json" --val_json "%BASE%-validate.json" --pkl "%TOKENIZER%" --output_dir "%MLM_DIR%" --max_seq_length 128 --seed %SEED%
 if errorlevel 1 goto error
 
 echo.
