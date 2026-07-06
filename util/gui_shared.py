@@ -2,20 +2,19 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import json
 
-GUI_FONT_SIZE = 12 
+GUI_FONT_SIZE = 12
 
 class ParentBuilder:
     def __init__(self, master):
         self.master = master
         master.title("Caption Builder")
-        
+
         self.all_phrases = []
         self.selected_phrases = set()
-        
+
         # Frame for checkboxes
         self.checkbox_frame = ttk.Frame(master)
         self.checkbox_frame.pack(side=tk.RIGHT, fill=tk.Y)
-        
 
 
         self.checkbox_canvas = tk.Canvas(self.checkbox_frame)
@@ -28,7 +27,7 @@ class ParentBuilder:
 
         self.checkbox_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.checkbox_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
- 
+
         self.load_button = ttk.Button(self.checkbox_frame, text="Load Data", command=self.load_data)
         self.load_button.pack(anchor=tk.E)
 
@@ -39,7 +38,7 @@ class ParentBuilder:
         self.collapse_all_button.pack(anchor=tk.E)
 
         self.checkbox_vars = {}
-    
+
     def load_data(self, filepath = None):
         if filepath == None:
             filepath = filedialog.askopenfilename(title="Select JSON File", filetypes=[("JSON Lines", "*.jsonl")])
@@ -56,7 +55,7 @@ class ParentBuilder:
                         except json.JSONDecodeError as e:
                             print(f"Error decoding JSON on line: {line.strip()}. Error: {e}")
                             messagebox.showerror("Error", f"Error decoding JSON on line: {line.strip()}. Error: {e}")
-                
+
                 self.all_phrases = sorted(list(phrases_set))
                 self.create_checkboxes()
 
@@ -75,36 +74,33 @@ class ParentBuilder:
     def create_checkboxes(self):
         for widget in self.checkbox_inner_frame.winfo_children():
             widget.destroy()
-    
+
         self.checkbox_vars.clear()
         self.collapsible_frames = {}  # Store references to collapsible frames
-    
-        # Define the specific phrases and their order
-        predefined_phrases = self.get_predefined_phrases()
-    
+
         # Create a collapsible frame class
         class CollapsibleFrame(ttk.Frame):
             def __init__(self, parent, text="", *args, **kwargs):
                 ttk.Frame.__init__(self, parent, *args, **kwargs)
                 self.shown = False
-            
+
                 # Frame with header and toggle button
                 self.header_frame = ttk.Frame(self)
                 self.header_frame.pack(fill=tk.X, expand=True)
-            
+
                 # Toggle button (+ or -)
                 self.toggle_button = ttk.Label(self.header_frame, text="▶", width=2)
                 self.toggle_button.pack(side=tk.LEFT, padx=(0, 5))
                 self.toggle_button.bind("<Button-1>", self.toggle)
-            
+
                 # Header label
                 self.title_label = ttk.Label(self.header_frame, text=text, font=("Arial", GUI_FONT_SIZE, "bold"))
                 self.title_label.pack(side=tk.LEFT, fill=tk.X)
                 self.title_label.bind("<Button-1>", self.toggle)
-            
+
                 # Container for content
                 self.content_frame = ttk.Frame(self)
-            
+
             def toggle(self, event=None):
                 if self.shown:
                     self.content_frame.pack_forget()
@@ -114,65 +110,75 @@ class ParentBuilder:
                     self.toggle_button.configure(text="▼")
                 self.shown = not self.shown
                 return "break"
-            
+
             def add_item(self, phrase, var, command):
                 checkbox = tk.Checkbutton(
-                    self.content_frame, 
-                    text=phrase, 
-                    variable=var, 
-                    command=command,     
+                    self.content_frame,
+                    text=phrase,
+                    variable=var,
+                    command=command,
                     font=("Arial", GUI_FONT_SIZE),
                     wraplength=300,  # Adjust wrap length in pixels
                     anchor="w",
                     justify="left"
                 )
                 checkbox.pack(anchor=tk.W, fill=tk.X)
-    
-        # Function to process a group of phrases
-        def create_group(name, phrases_list):
-            frame = CollapsibleFrame(self.checkbox_inner_frame, text=name)
+
+        # Build the (group name -> phrases) layout and render each group as a
+        # collapsible section. Subclasses decide the grouping by overriding
+        # group_phrases() so each game can sort captions by its own tileset.
+        for group_name, phrases in self.group_phrases():
+            frame = CollapsibleFrame(self.checkbox_inner_frame, text=group_name)
             frame.pack(fill=tk.X, anchor=tk.W, pady=(5, 0))
-            self.collapsible_frames[name] = frame
-        
-            for phrase in phrases_list:
-                if phrase in self.all_phrases:
-                    var = tk.BooleanVar(value=False)
-                    frame.add_item(phrase, var, self.update_caption)
-                    self.checkbox_vars[phrase] = var
-                    self.all_phrases.remove(phrase)
-        
-            return frame
-    
-        # Add predefined phrases first
-        for group_name, phrases in predefined_phrases:
-            create_group(group_name, phrases)
-    
-        # Group remaining phrases by common patterns
-        def group_phrases_by_pattern(pattern):
-            # Special case for background tree
+            self.collapsible_frames[group_name] = frame
+
+            for phrase in phrases:
+                var = tk.BooleanVar(value=False)
+                frame.add_item(phrase, var, self.update_caption)
+                self.checkbox_vars[phrase] = var
+
+    def group_phrases(self):
+        """Return an ordered list of (group_name, phrases) for the checkbox panel.
+
+        The default sorts the loaded phrases by the substring patterns from
+        get_patterns() (after any get_predefined_phrases groups), with an "Other
+        Phrases" catch-all. Subclasses override this to group by their own tileset
+        instead of by generic substring patterns.
+        """
+        remaining = list(self.all_phrases)
+        groups = []
+
+        # Predefined named groups first (exact-phrase membership).
+        for group_name, phrases in self.get_predefined_phrases():
+            picked = [phrase for phrase in phrases if phrase in remaining]
+            for phrase in picked:
+                remaining.remove(phrase)
+            groups.append((group_name, picked))
+
+        # Then group whatever is left by common substring patterns.
+        for pattern in self.get_patterns():
+            # Special case for background tree: exclude "giant tree platform".
             if pattern == "tree":
-                return [phrase for phrase in self.all_phrases if pattern in phrase and "giant" not in phrase]  # Exclude "giant tree platform" 
+                matched = [phrase for phrase in remaining if pattern in phrase and "giant" not in phrase]
             else:
-                return [phrase for phrase in self.all_phrases if pattern in phrase]
-    
-        patterns = self.get_patterns()
-    
-        for pattern in patterns:
-            grouped_phrases = group_phrases_by_pattern(pattern)
-            if pattern == "enem":
-                pattern = "enemy"
-            if grouped_phrases:
-                create_group(f"{pattern.capitalize()} Phrases", grouped_phrases)
-    
-        # Add remaining phrases
-        if self.all_phrases:
-            create_group("Other Phrases", self.all_phrases.copy())
+                matched = [phrase for phrase in remaining if pattern in phrase]
+            for phrase in matched:
+                remaining.remove(phrase)
+            label = "enemy" if pattern == "enem" else pattern
+            if matched:
+                groups.append((f"{label.capitalize()} Phrases", matched))
+
+        # Everything still unmatched goes into a final catch-all group.
+        if remaining:
+            groups.append(("Other Phrases", remaining))
+
+        return groups
 
     def get_patterns(self):
         # has to be overridden in the child class
         patterns = [ ]
         return patterns
-    
+
     def expand_all(self):
         """Expand all collapsible topic dropdowns (CollapsibleFrames) in the checkbox area."""
         if hasattr(self, 'collapsible_frames'):

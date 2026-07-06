@@ -7,7 +7,9 @@ import gc
 from PIL import ImageTk, Image
 import sys
 from util.gui_shared import ParentBuilder, GUI_FONT_SIZE
-from level_dataset import visualize_samples, convert_to_level_format, positive_negative_caption_split, mario_tiles, lr_tiles, mm_tiles
+from level_dataset import visualize_samples, convert_to_level_format, positive_negative_caption_split
+from render_mm2 import mm2_tiles
+from MarioMaker_create_ascii_captions import get_char_names, CAPTION_METADATA_FIELDS
 from util.sampler import SampleOutput
 from captions.caption_match import compare_captions
 from create_ascii_captions import assign_caption
@@ -334,19 +336,76 @@ class CaptionBuilder(ParentBuilder):
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save image:\n{str(e)}")
 
-    def get_patterns(self):
-        # Different for LoRA and tile diffusion
-        patterns = [
-                    "floor", "ceiling", "platform",
-                    "rectangular", "irregular", "enem",
-                    "pipe", "coin", "tower", #"wall",
-                    "cannon", "staircase",
-                    "question block", "loose block",
-                    "entrance direction", "exit direction",
-                    "powerup", "hazard", "water",
-                    "disappearing block"
-                    ]
-        return patterns
+    def group_phrases(self):
+        """Sort the loaded caption phrases into groups that mirror our MM2 tileset.
+
+        MarioDiffusion groups SMB captions with a hardcoded list of substring
+        patterns (floor/pipe/cannon/staircase/...). Our captions instead come from
+        mm2_tileset_we.json by way of MarioMaker_create_ascii_captions, so we build
+        the groups from the tileset itself: every tile is filed into a category by
+        its tags, and each phrase lands in the category of the tile it names. The
+        style/theme/difficulty metadata and the ground/floor summary, which are not
+        tied to any single tile, get their own groups on top.
+        """
+        global tileset_path
+
+        # Tile char -> lowercase display name, read straight from the tileset tags
+        # so the names track exactly what the captioner emits (e.g. "goomba",
+        # "question block", "mushroom platform").
+        char_names = {char: name.lower() for char, name in get_char_names(tileset_path).items()}
+
+        def tile_category(char):
+            """Category for a tile, picked by the first matching tag. Order is only
+            match priority: an enemy that is also "damaging"/"hazard" still counts
+            as an enemy, and a warp pipe as a pipe rather than a generic block."""
+            tags = self.tile_descriptors.get(char, set())
+            name = char_names.get(char, "")
+            if "enemy" in tags:
+                return "Enemies"
+            if "collectable" in tags:
+                return "Collectables & Power-ups"
+            if "hazard" in tags:
+                return "Hazards"
+            if "platform" in tags:
+                return "Platforms"
+            if tags & {"pipe", "warp", "door"}:
+                return "Pipes, Doors & Warps"
+            if "solid" in tags or name.endswith("block"):
+                return "Blocks & Terrain"
+            return "Other"
+
+        # Match longer names first so "mushroom platform" beats "mushroom" and
+        # "bullet bill blaster" beats any shorter overlap.
+        named_tiles = sorted(char_names.items(), key=lambda item: len(item[1]), reverse=True)
+
+        # Metadata phrases end in one of these words ("SMW style", "night theme",
+        # "easy difficulty"); see MarioMaker_create_ascii_captions.
+        metadata_suffixes = tuple(suffix for _field, suffix in CAPTION_METADATA_FIELDS)
+
+        # Panel order: structural terrain first, enemies/hazards last.
+        group_order = [
+            "Level Style", "Ground & Floor", "Blocks & Terrain", "Platforms",
+            "Pipes, Doors & Warps", "Collectables & Power-ups", "Enemies",
+            "Hazards", "Other",
+        ]
+        grouped = {name: [] for name in group_order}
+
+        for phrase in self.all_phrases:
+            low = phrase.lower()
+            if low.endswith(metadata_suffixes):
+                grouped["Level Style"].append(phrase)
+            elif "floor" in low or "ground" in low:
+                grouped["Ground & Floor"].append(phrase)
+            else:
+                category = "Other"
+                for char, name in named_tiles:
+                    if name and name in low:
+                        category = tile_category(char)
+                        break
+                grouped[category].append(phrase)
+
+        # Only show categories that actually occur in the loaded captions.
+        return [(name, grouped[name]) for name in group_order if grouped[name]]
 
     def load_data(self, filepath = None):
         global tileset_path, game_selected
@@ -531,7 +590,7 @@ class CaptionBuilder(ParentBuilder):
                 #selected_game = self.game_var.get()
                 #elif game_selected == "Mario":
                 actual_caption = assign_caption(scene, self.id_to_char, self.char_to_id, self.tile_descriptors, False, False)
-                pil_img = visualize_samples(images)
+                pil_img = visualize_samples(images, game="MM2")
                 
                 self.generated_images.append(pil_img)
                 img_tk = ImageTk.PhotoImage(pil_img)
@@ -885,8 +944,7 @@ Average Segment Score: {avg_segment_score}"""
             score_label_text = f"Comparison Score: {compare_score}"
         score_label.config(text=score_label_text)
 
-    def _render_scene_image(self, scene): 
-        game_name = "Mario Maker (MM)"
+    def _render_scene_image(self, scene):
         num_classes = common_settings.MARIO_TILE_COUNT
 
         one_hot = torch.nn.functional.one_hot(
@@ -894,7 +952,7 @@ Average Segment Score: {avg_segment_score}"""
             num_classes=num_classes
         ).float().permute(2, 0, 1).unsqueeze(0)
 
-        pil_img = visualize_samples(one_hot, game=game_name)
+        pil_img = visualize_samples(one_hot, game="MM2")
         return pil_img[0] if isinstance(pil_img, list) else pil_img
 
     def _refresh_generated_image(self, idx):
@@ -1040,7 +1098,9 @@ class LevelEditor:
         self.master.destroy()
 
     def _load_tile_images(self, game):
-        return mario_tiles()
+        # MM2 per-tile sprites, indexed exactly like extract_tileset()/id_to_char
+        # so tile id N in the scene maps to tile image N in the editor grid.
+        return mm2_tiles()
 
 import argparse
 def parse_args():
