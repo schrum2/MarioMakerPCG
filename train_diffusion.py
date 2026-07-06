@@ -84,7 +84,7 @@ def parse_args():
     parser.add_argument("--num_tiles", type=int, default=None, help="Number of tile types. If omitted, defaults to the per-game value below.")
     parser.add_argument("--batch_size", type=int, default=32, help="Training batch size") # TODO: Consider reducing to 16 to help generalization
     parser.add_argument("--augment", action="store_true", help="Enable data augmentation")
-    parser.add_argument("--multiple_captions", action="store_true", help="Each sample stores several captions ('caption', 'caption1', ...); select one at random per access instead of phrase-shuffle augmentation. This becomes the only augmentation (phrase shuffling and scene flipping are disabled).")
+    parser.add_argument("--no_multiple_captions", dest="multiple_captions", action="store_false", default=True, help="Disable multiple-caption selection. By default, when a sample stores several captions ('caption', 'caption1', ...) one is chosen at random per access, and that selection is the only augmentation (phrase shuffling and scene flipping are disabled). Pass this flag to instead use only the canonical 'caption' field with phrase-shuffle augmentation. Multiple-caption selection is automatically disabled for unconditional or negative-prompt training regardless of this flag.")
     parser.add_argument("--complete_levels", action="store_true", help="Treat scenes as variable-size complete levels: group them into --num_buckets size buckets and pad each up to its bucket's shared shape with the null/void tile (--pad_tile_id). Use with datasets built via 'create_megaman_json_data.py --scan_mode whole'.")
     parser.add_argument("--num_buckets", type=int, default=5, help="Number of size buckets when --complete_levels is set.")
     parser.add_argument("--pad_tile_id", type=int, default=None, help="Tile id used to fill the pad region under --complete_levels (the null/void tile). Defaults to the 'null'-descriptor tile resolved from --tileset.")
@@ -356,16 +356,21 @@ def main():
     if args.split_pretrained_sentences and not args.pretrained_language_model:
         raise ValueError("Sentence splitting requires the use of a pretrained language model")
 
+    # Multiple-caption selection is on by default, but only applies to text-conditional,
+    # non-negative training. Auto-disable it (rather than erroring) for the incompatible
+    # modes so unconditional and negative-prompt runs keep working with the default.
     if args.multiple_captions:
         if not args.text_conditional:
-            raise ValueError("Multiple captions requires text conditioning to be enabled")
-        if args.negative_prompt_training:
+            # Unconditional scenes carry no captions, so there is nothing to select among.
+            args.multiple_captions = False
+        elif args.negative_prompt_training:
             # The stored alternative captions are full descriptions, not the structured
             # positive/negative phrase format that negative prompt training expects.
-            raise ValueError("Multiple captions cannot be combined with negative prompt training")
-        if args.augment:
+            print("Note: multiple-caption selection is disabled because --negative_prompt_training is set.")
+            args.multiple_captions = False
+        elif args.augment:
             # Selecting among the stored captions is meant to be the only augmentation.
-            print("Note: --augment is ignored when --multiple_captions is set; caption selection is the only augmentation.")
+            print("Note: --augment is ignored while multiple-caption selection is active (the default); caption selection is the only augmentation. Pass --no_multiple_captions to use phrase-shuffle augmentation instead.")
 
     """
     If sprite temperature scaling is enabled and the model is unconditional, 
