@@ -14,8 +14,9 @@ from create_ascii_captions import assign_caption, save_level_data
 #from captions.MM_caption_match import compare_captions as mm_compare_captions
 #from LR_create_ascii_captions import assign_caption as lr_assign_caption
 #from LR_create_ascii_captions import save_level_data as lr_save_level_data
-from captions.util import extract_tileset 
+from captions.util import extract_tileset
 from captions.caption_match import compare_captions
+from captions.MM2_caption_match import caption_tools as mm2_caption_tools
 #from captions.LR_caption_match import compare_captions as lr_compare_captions
 from tqdm.auto import tqdm
 import util.common_settings as common_settings
@@ -34,6 +35,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=32, help="Training batch size") 
         
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--all_captions", action="store_true", help="Generate a scene for EVERY stored caption of each entry (caption, caption1, caption2, ...), not just the first. Output entries carry source_index/source_name/caption_index so scenes generated from the same source scene can be grouped. Mario Maker only")
     parser.add_argument("--inference_steps", type=int, default=common_settings.NUM_INFERENCE_STEPS, help="Number of denoising steps") # Large reduction from the 500 used during training
     parser.add_argument("--guidance_scale", type=float, default=common_settings.GUIDANCE_SCALE, help="Guidance scale for classifier-free guidance")
     parser.add_argument("--save_as_json", action="store_true", help="Save generated levels as JSON")
@@ -165,6 +167,36 @@ def main():
         print("Error: --match_scene_width and --random_width are mutually exclusive.")
         exit(1)
 
+    # Mario Maker levels get their own captioner and comparison (the SMB code
+    # would call every MM2 pipe broken -- the tileset has no <>[] chars).
+    mm2 = "mm2" in os.path.basename(tileset).lower()
+
+    if args.all_captions and not mm2:
+        print("Error: --all_captions is only supported for Mario Maker datasets.")
+        exit(1)
+    if args.all_captions and args.compare_checkpoints:
+        print("Error: --all_captions cannot be combined with --compare_checkpoints.")
+        exit(1)
+
+    if mm2 and not args.compare_checkpoints:
+        # Generate straight from the dataset entries (not a LevelDataset) so each
+        # output can be tagged with the source scene its caption came from.
+        with open(path_to_json, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+        items = expand_mm2_caption_items(raw_data, args.all_captions)
+        if not items:
+            print(f"Error: no captions found in {path_to_json}")
+            exit(1)
+        print(f"Generating {len(items)} scenes from {len(raw_data)} dataset entries...")
+        avg_score, results = mm2_caption_adherence(args, device, pipe, items, tileset)
+        print(f"Average caption adherence score: {avg_score:.4f}")
+        if args.save_as_json:
+            out_path = os.path.join(args.output_dir, "all_levels.json")
+            with open(out_path, "w") as f:
+                json.dump(results, f, indent=4)
+            print(f"Saved {len(results)} captioned scenes to {out_path}")
+        return
+
     # Load once. LevelDataset.data holds the raw entries (scenes included) regardless of mode,
     # so we can inspect the set of scene widths here to decide how to generate.
     dataset = LevelDataset(
@@ -248,6 +280,103 @@ def main():
                 lr_save_level_data(scenes, tileset, os.path.join(args.output_dir, "all_levels.json"), False, args.describe_absence)
 
 
+def expand_mm2_caption_items(data, all_captions):
+    """One generation item per caption, each tagged with its source entry.
+    With all_captions, every stored caption of an entry ("caption", "caption1",
+    ...) becomes an item, so downstream metrics can compare the scenes those
+    sibling captions produce. Entries can be caption-only (no scene)."""
+    items = []
+    for idx, entry in enumerate(data):
+        if not isinstance(entry, dict):
+            continue
+        captions = [entry["caption"]] if entry.get("caption") else []
+        if all_captions:
+            i = 1
+            while f"caption{i}" in entry:
+                captions.append(entry[f"caption{i}"])
+                i += 1
+        for cidx, cap in enumerate(captions):
+            items.append({
+                "caption": cap,
+                "scene": entry.get("scene"),
+                "source_index": idx,
+                "source_name": entry.get("name"),
+                "caption_index": cidx,
+            })
+    return items
+
+
+def mm2_caption_adherence(args, device, pipe, items, tileset):
+    """Generate one scene per item and score it with the MM captioner. Batches
+    are bucketed by scene size (an item's source scene shape, else
+    args.height x args.width) since a batch must share one shape. Returns
+    (average score, results); each result carries the prompt, scene, its
+    deterministic caption, the score, and the source metadata."""
+    assign_caption_fn, compare_captions_fn = mm2_caption_tools(tileset)
+
+    by_shape = {}
+    for item in items:
+        if item.get("scene"):
+            shape = (len(item["scene"]), len(item["scene"][0]))
+        else:
+            shape = (args.height, args.width)
+        by_shape.setdefault(shape, []).append(item)
+
+    results = []
+    score_sum = 0.0
+    per_shape_scores = {}
+    for shape in sorted(by_shape):
+        height, width = shape
+        bucket = by_shape[shape]
+        for start in tqdm(range(0, len(bucket), args.batch_size),
+                          desc=f"Generating {height}x{width}", unit="batch"):
+            batch = bucket[start:start + args.batch_size]
+            captions = [item["caption"] for item in batch]
+            generator = torch.Generator(device).manual_seed(int(args.seed))
+            with torch.no_grad():
+                samples = pipe(
+                    caption=captions,
+                    num_inference_steps=args.inference_steps,
+                    height=height,
+                    width=width,
+                    guidance_scale=args.guidance_scale,
+                    output_type="tensor",
+                    batch_size=len(captions),
+                    generator=generator,
+                ).images
+
+            if args.save_image_samples:
+                visualize_samples(samples, args.output_dir, start_index=len(results),
+                                  prompts=captions, game="MM")
+
+            scenes = samples_to_scenes(samples)
+            for item, scene in zip(batch, scenes):
+                actual_caption = assign_caption_fn(scene)
+                score = compare_captions_fn(item["caption"], actual_caption)
+                score_sum += score
+                per_shape_scores.setdefault(shape, []).append(score)
+                results.append({
+                    "prompt": item["caption"],
+                    "scene": scene,
+                    "caption": actual_caption,
+                    "score": score,
+                    "source_index": item["source_index"],
+                    "source_name": item["source_name"],
+                    "caption_index": item["caption_index"],
+                })
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    if len(per_shape_scores) > 1:
+        print("Samples and caption adherence by scene size:")
+        for shape in sorted(per_shape_scores):
+            scores = per_shape_scores[shape]
+            print(f"\t{shape[0]}x{shape[1]}: {len(scores)} samples, avg score {sum(scores) / len(scores):.4f}")
+
+    return score_sum / len(results), results
+
+
 def track_caption_adherence(args, device, dataloader, id_to_char, char_to_id, tile_descriptors, using_unet_pipe=True):
 
     if args.num_tiles == common_settings.MARIO_TILE_COUNT:
@@ -270,6 +399,11 @@ def track_caption_adherence(args, device, dataloader, id_to_char, char_to_id, ti
             height = args.height
             width = args.width
             path_to_json = args.json
+
+    # MM checkpoints need the MM tools, not the SMB defaults (as in main()).
+    assign_caption_fn = compare_captions_fn = None
+    if "mm2" in os.path.basename(tileset).lower():
+        assign_caption_fn, compare_captions_fn = mm2_caption_tools(tileset)
 
     width_range = resolve_eval_width_range(args)
 
@@ -341,7 +475,7 @@ def track_caption_adherence(args, device, dataloader, id_to_char, char_to_id, ti
 
             per_width_scores = {}
             avg_score, _, _, _ = calculate_caption_score_and_samples(
-                device, pipe, dataloader, args.inference_steps, args.guidance_scale, args.seed, id_to_char, char_to_id, tile_descriptors, args.describe_absence, output=False, width=width, height=height, random_width=args.random_width, width_range=width_range, match_scene_width=args.match_scene_width, per_width_scores=per_width_scores
+                device, pipe, dataloader, args.inference_steps, args.guidance_scale, args.seed, id_to_char, char_to_id, tile_descriptors, args.describe_absence, output=False, width=width, height=height, random_width=args.random_width, width_range=width_range, match_scene_width=args.match_scene_width, per_width_scores=per_width_scores, assign_caption_fn=assign_caption_fn, compare_captions_fn=compare_captions_fn
             )
 
             # Collapse the per-width score lists into mean scores for this checkpoint.
@@ -368,12 +502,15 @@ def track_caption_adherence(args, device, dataloader, id_to_char, char_to_id, ti
 
     return scores_by_epoch
 
-def calculate_caption_score_and_samples(device, pipe, dataloader, inference_steps, guidance_scale, random_seed, id_to_char, char_to_id, tile_descriptors, describe_absence, height, width, output=True, random_width=False, width_range=None, match_scene_width=False, per_width_scores=None):
+def calculate_caption_score_and_samples(device, pipe, dataloader, inference_steps, guidance_scale, random_seed, id_to_char, char_to_id, tile_descriptors, describe_absence, height, width, output=True, random_width=False, width_range=None, match_scene_width=False, per_width_scores=None, assign_caption_fn=None, compare_captions_fn=None):
 
     # Optional per-width score collection. When the caller passes a dict, each sample's caption
     # score is appended under the width it was generated at (per_width_scores[width] -> list of
     # scores). This lets callers break the overall adherence score down by scene size without
     # changing this function's return signature (which several training scripts depend on).
+
+    # assign_caption_fn/compare_captions_fn override the game detection below, for
+    # Mario Maker (which the height checks can't tell from Mario: both MARIO_HEIGHT).
 
     #Used for potential level scene pruning later
     original_mode = dataloader.dataset.mode
@@ -469,7 +606,9 @@ def calculate_caption_score_and_samples(device, pipe, dataloader, inference_step
 
                 # TODO: More reliable way to detect if we are in Mega Man vs Mario, rather than relying on the presence of the "A" tile in char_to_id? Maybe just pass in a game type argument?
 
-                if height == common_settings.LR_HEIGHT:
+                if assign_caption_fn is not None:
+                    actual_caption = assign_caption_fn(scene)
+                elif height == common_settings.LR_HEIGHT:
                     scene = [[tile % common_settings.LR_TILE_COUNT for tile in s] for s in scene]
                     actual_caption = lr_assign_caption(scene, id_to_char, char_to_id, tile_descriptors, False, describe_absence)
                 elif height == common_settings.MEGAMAN_HEIGHT and "A" in char_to_id: # Mario does not have an "A" tile, though Mario and Mega Man have the same height:
@@ -481,7 +620,9 @@ def calculate_caption_score_and_samples(device, pipe, dataloader, inference_step
 
 
                 if output: print(f"\t{caption}")
-                if height == common_settings.LR_HEIGHT:
+                if compare_captions_fn is not None:
+                    compare_score = compare_captions_fn(caption, actual_caption)
+                elif height == common_settings.LR_HEIGHT:
                     compare_score = lr_compare_captions(caption, actual_caption)
                 elif height == common_settings.MEGAMAN_HEIGHT and "A" in char_to_id: # Mario does not have an "A" tile, though Mario and Mega Man have the same height:
                     compare_score = mm_compare_captions(caption, actual_caption)

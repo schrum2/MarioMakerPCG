@@ -659,6 +659,13 @@ class ImageGridViewer:
                 # Double-click to expand
                 btn.bind('<Double-Button-1>', lambda event, i=idx: self._toggle_expanded_view(i))
 
+                # Caption adherence score (prompt vs generated scene), if scored
+                score = getattr(self.genomes[idx], "score", None)
+                if score is not None:
+                    score_label = tk.Label(frame, text=f"Score: {score:.3f}",
+                                           font=("Helvetica", 10))
+                    score_label.pack()
+
                 # Button container for horizontal layout
                 button_row = tk.Frame(frame)
                 button_row.pack(pady=(2, 2))

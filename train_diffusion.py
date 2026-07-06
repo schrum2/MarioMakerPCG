@@ -15,6 +15,7 @@ from models.text_model import TransformerModel
 from models.text_diffusion_pipeline import TextConditionalDDPMPipeline
 from models.latent_diffusion_pipeline import UnconditionalDDPMPipeline
 from evaluate_caption_adherence import calculate_caption_score_and_samples
+from captions.MM2_caption_match import caption_tools as mm2_caption_tools
 #from MM_create_ascii_captions import assign_caption as mm_assign_caption ##test
 from captions.util import extract_tileset 
 from transformers import AutoTokenizer, AutoModel
@@ -879,12 +880,20 @@ def main():
                 # validation sets (e.g. 16 and 32 wide) are scored fairly instead of forcing every
                 # caption to the single fixed scene_width. per_width_scores collects each sample's
                 # score under the width it was generated at, for the per-width adherence plot below.
+                # MM validation needs the MM tools; the SMB defaults misread the
+                # MM2 tile vocabulary.
+                if args.game == "MM" and "mm2" in os.path.basename(args.tileset).lower():
+                    mm2_assign_fn, mm2_compare_fn = mm2_caption_tools(args.tileset)
+                else:
+                    mm2_assign_fn = mm2_compare_fn = None
+
                 per_width_scores = {}
                 avg_caption_score, all_samples, all_prompts, compare_all_scores = calculate_caption_score_and_samples(
                     accelerator.device, pipeline, val_dataloader, inference_steps, guidance_scale, args.seed,
                     id_to_char=id_to_char, char_to_id=char_to_id, tile_descriptors=tile_descriptors, describe_absence=args.describe_absence,
                     output=False, height=scene_height, width=scene_width,
-                    match_scene_width=True, per_width_scores=per_width_scores
+                    match_scene_width=True, per_width_scores=per_width_scores,
+                    assign_caption_fn=mm2_assign_fn, compare_captions_fn=mm2_compare_fn
                 )
                 # Collapse the per-width score lists into a mean score per width for this epoch.
                 width_scores = {w: sum(s) / len(s) for w, s in per_width_scores.items() if s}

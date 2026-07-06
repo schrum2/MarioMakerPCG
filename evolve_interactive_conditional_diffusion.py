@@ -5,8 +5,9 @@ import argparse
 import torch
 from evolution.genome import LatentGenome
 from create_ascii_captions import assign_caption
+from captions.caption_match import compare_captions
 #from LR_create_ascii_captions import assign_caption as lr_assign_caption
-from MarioMaker_create_ascii_captions import assign_caption as mm_assign_caption, build_id_to_char, get_char_names
+from captions.MM2_caption_match import caption_tools as mm2_caption_tools
 import util.common_settings as common_settings
 from models.pipeline_loader import get_pipeline
 
@@ -29,10 +30,10 @@ class TextDiffusionEvolver(Evolver):
         # print("self.id_to_char:", self.id_to_char)
         # print("self.char_to_id:", self.char_to_id)
 
-        # MM captions read tile names from the tileset, not the Mario tag table
+        # MM gets its own captioner + comparison (read from the tileset, not the
+        # Mario tag table), matching run_diffusion / evaluate_caption_adherence.
         if args is not None and args.game == 'MM':
-            self.mm_id_to_char = build_id_to_char(tileset_path)
-            self.mm_char_names = get_char_names(tileset_path)
+            self.mm_assign_caption, self.mm_compare_captions = mm2_caption_tools(tileset_path)
 
     def random_latent(self, seed=1):
         # Create the initial noise latents (this is what the pipeline does internally)
@@ -92,10 +93,23 @@ class TextDiffusionEvolver(Evolver):
         if args.game == 'Mario':
             actual_caption = assign_caption(scene, self.id_to_char, self.char_to_id, self.tile_descriptors, False, self.args.describe_absence)
         elif args.game == 'MM':
-            actual_caption = mm_assign_caption(scene, self.mm_id_to_char, self.mm_char_names)
+            actual_caption = self.mm_assign_caption(scene)
         elif args.game == 'LR':
             actual_caption = lr_assign_caption(scene, self.id_to_char, self.char_to_id, self.tile_descriptors, False, self.args.describe_absence)
         g.caption = actual_caption
+
+        # Score how well the generated scene matches the prompt it was conditioned
+        # on: compare the prompt against the scene's own deterministic caption.
+        if g.prompt and g.prompt.strip():
+            if args.game == 'MM':
+                g.score = self.mm_compare_captions(g.prompt, actual_caption)
+            elif args.game == 'Mario':
+                g.score = compare_captions(g.prompt, actual_caption)
+            else:
+                g.score = None
+        else:
+            g.score = None
+        print(f"Caption adherence score: {g.score}")
 
         if args.game == 'Mario':
             samples = visualize_samples(images)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse
+import json
 import os
 import torch
 import numpy as np
@@ -7,6 +8,7 @@ import random
 from level_dataset import visualize_samples, samples_to_scenes
 from create_ascii_captions import save_level_data
 from create_level_json_data import load_tileset, MM2_EXTRA_TILE
+from captions.MM2_caption_match import caption_tools as mm2_caption_tools
 import util.common_settings as common_settings
 from models.pipeline_loader import get_pipeline
 
@@ -136,7 +138,15 @@ def generate_levels(args):
     if args.save_as_json:
         scenes = samples_to_scenes(all_samples)
         out_path = os.path.join(args.output_dir, "all_levels.json")
-        save_level_data(scenes, args.tileset, out_path, False, args.describe_absence, exclude_broken=False)
+        if args.game == "MM":
+            # The SMB captioner doesn't know the MM2 vocabulary; use the MM one.
+            assign_caption_fn, _ = mm2_caption_tools(args.tileset)
+            data = [{"prompt": None, "scene": scene, "caption": assign_caption_fn(scene)}
+                    for scene in scenes]
+            with open(out_path, "w") as f:
+                json.dump(data, f, indent=4)
+        else:
+            save_level_data(scenes, args.tileset, out_path, False, args.describe_absence, exclude_broken=False)
         print(f"Saved {len(scenes)} captioned scenes to {out_path}")
 
 
