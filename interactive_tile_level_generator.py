@@ -379,21 +379,31 @@ class CaptionBuilder(ParentBuilder):
         named_tiles = sorted(char_names.items(), key=lambda item: len(item[1]), reverse=True)
 
         # Metadata phrases end in one of these words ("SMW style", "night theme",
-        # "easy difficulty"); see MarioMaker_create_ascii_captions.
-        metadata_suffixes = tuple(suffix for _field, suffix in CAPTION_METADATA_FIELDS)
+        # "easy difficulty"); see MarioMaker_create_ascii_captions. Each suffix
+        # gets its own panel rather than one shared "Level Style" bucket.
+        metadata_group_names = {
+            "style": "Level Style",
+            "theme": "Level Theme",
+            "difficulty": "Difficulty",
+        }
+        suffix_to_group = {
+            suffix: metadata_group_names.get(suffix, "Level Style")
+            for _field, suffix in CAPTION_METADATA_FIELDS
+        }
 
         # Panel order: structural terrain first, enemies/hazards last.
         group_order = [
-            "Level Style", "Ground & Floor", "Blocks & Terrain", "Platforms",
-            "Pipes, Doors & Warps", "Collectables & Power-ups", "Enemies",
-            "Hazards", "Other",
+            "Level Style", "Level Theme", "Difficulty", "Ground & Floor",
+            "Blocks & Terrain", "Platforms", "Pipes, Doors & Warps",
+            "Collectables & Power-ups", "Enemies", "Hazards", "Other",
         ]
         grouped = {name: [] for name in group_order}
 
         for phrase in self.all_phrases:
             low = phrase.lower()
-            if low.endswith(metadata_suffixes):
-                grouped["Level Style"].append(phrase)
+            metadata_match = next((suffix for suffix in suffix_to_group if low.endswith(suffix)), None)
+            if metadata_match:
+                grouped[suffix_to_group[metadata_match]].append(phrase)
             elif "floor" in low or "ground" in low:
                 grouped["Ground & Floor"].append(phrase)
             else:
