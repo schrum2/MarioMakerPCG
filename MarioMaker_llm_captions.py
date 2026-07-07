@@ -817,6 +817,98 @@ def call_ollama(prompt, model, url, timeout, retries, max_tokens=900,
                 ) from e
 
 
+def _ollama_base_url(generate_url):
+    """Strip the '/api/...' path off the Ollama endpoint to get its server root.
+
+    The user passes the /api/generate URL; /api/tags and /api/pull live on the
+    same server, so derive them from that instead of adding more flags.
+    """
+    marker = "/api/"
+    idx = generate_url.find(marker)
+    return generate_url[:idx] if idx != -1 else generate_url.rstrip("/")
+
+
+def ollama_model_available(model, generate_url, timeout=10):
+    """Return True if `model` is already pulled on the Ollama server.
+
+    Ollama tags carry an implicit ':latest' when no tag is given, so a bare
+    'llava' should match the listed 'llava:latest'. Any error talking to the
+    server returns False so the caller falls through to a pull attempt (which
+    surfaces a clearer error if the server is truly down).
+    """
+    url = _ollama_base_url(generate_url) + "/api/tags"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return False
+    names = {m.get("name", "") for m in data.get("models", [])}
+    if model in names:
+        return True
+    # Match a bare name against its ':latest' tag and vice versa.
+    wanted = model if ":" in model else f"{model}:latest"
+    return wanted in names
+
+
+def ollama_pull_model(model, generate_url, timeout=1800):
+    """Pull `model` onto the Ollama server, streaming progress to the console.
+
+    Mirrors `ollama pull <model>`: the /api/pull endpoint streams newline-
+    delimited JSON status objects, some with completed/total byte counts. We
+    render a single updating percentage line so a multi-GB download shows life.
+    Raises RuntimeError on failure (unknown model, network drop, disk full).
+    """
+    url = _ollama_base_url(generate_url) + "/api/pull"
+    payload = json.dumps({"model": model, "stream": True}).encode("utf-8")
+    print(f"Model '{model}' not found on the Ollama server; pulling it now "
+          f"(this can take a while the first time)...", flush=True)
+    req = urllib.request.Request(
+        url, data=payload,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    last_status = None
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            for line in resp:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line.decode("utf-8"))
+                except json.JSONDecodeError:
+                    continue
+                if msg.get("error"):
+                    raise RuntimeError(f"Ollama pull failed: {msg['error']}")
+                status = msg.get("status", "")
+                total = msg.get("total")
+                completed = msg.get("completed")
+                if total and completed is not None:
+                    pct = completed / total * 100
+                    print(f"\r  {status}: {pct:5.1f}% "
+                          f"({completed / 1e9:.2f}/{total / 1e9:.2f} GB)   ",
+                          end="", flush=True)
+                elif status and status != last_status:
+                    # A phase change with no byte counts (manifest, verify, etc.).
+                    print(f"\r  {status}" + " " * 40, end="", flush=True)
+                last_status = status
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise RuntimeError(f"Ollama pull request failed: {e}") from e
+    print(f"\r  pull complete: {model}" + " " * 40, flush=True)
+
+
+def ensure_ollama_model(model, generate_url):
+    """Make sure `model` is present on the Ollama server, pulling it if not.
+
+    Called once before captioning starts for the ollama/moondream/llava
+    backends, so a missing model is downloaded up front instead of every
+    /api/generate call 404ing into the retry/backoff loop.
+    """
+    if ollama_model_available(model, generate_url):
+        return
+    ollama_pull_model(model, generate_url)
+
+
 # SmolVLM is a local HuggingFace model loaded in-process (not an HTTP API like
 # the other backends). Loading it is expensive, so the processor/model are cached
 # here and reused across every scene in a run; only the first call pays the cost.
@@ -1129,6 +1221,13 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                 "build --with_images' so each sample gets a cropped PNG, then retry."
             )
             sys.exit(1)
+
+    # For the local Ollama-served backends, make sure the model is pulled before
+    # the run starts. Otherwise every /api/generate call 404s and disappears into
+    # the retry/backoff loop, which never recovers (a missing model isn't
+    # transient). This mirrors doing `ollama pull <model>` by hand first.
+    if backend in ("ollama", "moondream", "llava"):
+        ensure_ollama_model(model, url)
 
     id_to_char = build_id_to_char(tileset_path)
     char_names = get_char_names(tileset_path)
