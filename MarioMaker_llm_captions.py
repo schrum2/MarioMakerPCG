@@ -1105,9 +1105,9 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                        backend="ollama", api_key=None, max_tokens=900, max_reprompts=3,
                        num_captions=5, prompt_log_file="MM2_Prompt.txt",
                        num_ctx=8192, max_num_ctx=16384, temperature=0.4, images_dir=None):
-    # Passing --images-dir is what turns on image input; there's no separate
-    # on/off flag for it.
-    with_images = images_dir is not None
+    # A vision-capable model always gets images alongside the grid; a
+    # text-only model never does. There's no separate flag for this.
+    with_images = model_supports_vision(model)
     image_clause = build_image_clause() if with_images else ""
     prompt_template = build_prompt_template(num_captions, image_clause)
 
@@ -1115,17 +1115,18 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         dataset = json.load(f)
 
     # Each dataset item's 'image' path (written by mm2pipeline.dataset build
-    # --with_images) is resolved against --images-dir.
-    dataset_dir = os.path.abspath(images_dir) if with_images else os.path.dirname(os.path.abspath(dataset_path))
+    # --with_images) is resolved against --images-dir, defaulting to the
+    # dataset JSON's own folder.
+    dataset_dir = os.path.abspath(images_dir) if images_dir else os.path.dirname(os.path.abspath(dataset_path))
     if with_images:
         has_any_image = any(
             isinstance(it, dict) and it.get("image") for it in dataset
         )
         if not has_any_image:
             print(
-                "ERROR: --images-dir was set, but no items in the dataset carry an "
-                "'image' path.\n  Rebuild the dataset with 'python -m mm2pipeline dataset build' "
-                "--with_images so each sample gets a cropped PNG, then retry."
+                f"ERROR: model '{model}' is vision-capable, but no items in the dataset carry "
+                "an 'image' path.\n  Rebuild the dataset with 'python -m mm2pipeline dataset "
+                "build --with_images' so each sample gets a cropped PNG, then retry."
             )
             sys.exit(1)
 
@@ -1600,19 +1601,11 @@ def main():
         help=(
             "Directory holding each level's rendered PNG crop (the ones produced by "
             "mm2pipeline.dataset build --with_images, referenced by the dataset's "
-            "'image' field). Passing this turns on image input: each crop is sent to "
-            "the model alongside the ASCII/token grid. REQUIRES a vision-capable model "
-            "and a backend that accepts images (claude, openai, gemini, or an Ollama "
-            "vision model such as llama3.2-vision / llava / qwen2.5vl). Omit this to "
-            "run text-only."
-        ),
-    )
-    parser.add_argument(
-        "--allow-nonvision-model",
-        action="store_true",
-        help=(
-            "Skip the safety check that --images-dir is paired with a vision-capable "
-            "model. Use only if you know the chosen model accepts images."
+            "'image' field). Defaults to the dataset JSON's own folder. Only matters "
+            "when --model is vision-capable (claude, gpt-4o, gemini, or an Ollama "
+            "vision model such as llama3.2-vision / llava / qwen2.5vl) -- such models "
+            "automatically get each scene's crop sent alongside the ASCII/token grid, "
+            "and it is an error if the dataset has no 'image' field to send."
         ),
     )
     args = parser.parse_args()
@@ -1663,21 +1656,6 @@ def main():
         "llava": "llava:7b",
     }
     model = args.model or default_models[args.backend]
-
-    # Sending images to a text-only model silently wastes the crop (and on the
-    # local Ollama backend, the image is simply ignored). Guard against it.
-    if args.images_dir and not model_supports_vision(model) and not args.allow_nonvision_model:
-        print(
-            f"Error: --images-dir needs a vision-capable model, but '{model}' does not "
-            f"look like one.\n"
-            f"  Use a multimodal model, for example:\n"
-            f"    --backend claude  --model claude-sonnet-4-6\n"
-            f"    --backend openai  --model gpt-4o\n"
-            f"    --backend gemini  --model gemini-2.5-flash\n"
-            f"    --backend ollama  --model llama3.2-vision   (or llava / qwen2.5vl)\n"
-            f"  Or pass --allow-nonvision-model to override this check."
-        )
-        sys.exit(1)
 
     generate_captions(
         args.dataset,

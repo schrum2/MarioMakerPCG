@@ -465,7 +465,7 @@ def main_build(argv=None):
                              f"{WINDOW_W}x{WINDOW_H}-tile region out of the level's "
                              "rendered PNG and save it next to the dataset. The PNG "
                              "is the one produced by the .bcd export (same stem as "
-                             "the ascii file, in a sibling 'images/' folder).")
+                             "the ascii file, in a sibling 'images/' folder). This is necessary for use with VLMs.")
     parser.add_argument("--image_dir", default=None,
                         help="Explicit folder to look in for level PNGs (checked "
                              "before the conventional 'images/' locations).")

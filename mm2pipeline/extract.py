@@ -325,11 +325,11 @@ def parse_args(argv=None):
     p.add_argument("--dislikes", type=int, default=None, metavar="N",
                    help="Only extract levels with at most N dislikes/boos (e.g. --dislikes 300)")
     p.add_argument("--skip_3dworld", action="store_true",
-                   help="Skip levels whose gamestyle is Super Mario 3D World")
+                   help="Skip levels whose gamestyle is Super Mario 3D World, needed for .swe conversion.")
     p.add_argument("--skip_items", action="store_true",
-                   help="Skip levels containing any object listed in SKIP_ITEM_NAMES")
+                   help="Skip levels containing any object listed in SKIP_ITEM_NAMES, needed for .swe conversion.")
     p.add_argument("--skip_subworld_items", action="store_true",
-                   help="Skip levels whose subworld contains any items")
+                   help="Skip levels whose subworld contains any items, needed for .swe conversion.")
     return p.parse_args(argv)
 
 
