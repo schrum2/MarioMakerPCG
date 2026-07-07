@@ -682,10 +682,12 @@ def _render_mm2_samples(sample_indices, output_dir, start_index, prompts, gamest
             glyph = glyph_of.get(tid)
             is_boss = glyph in _MM2_BOSS_GLYPHS
             is_tiled = glyph in _MM2_TILED_GLYPHS
+            # Fixes enemies that should be 2x1 being squished down into a 1x1
+            narrow_single = not is_boss and not is_tiled and tw * th <= 2
             for cells in _mm2_components(grid, tid, consumed, h, w):
                 # Skip single-cell specks (a stray glyph shouldn't trigger a big
                 # cover-up stamp) and scattered noise (require a solid-ish block).
-                if len(cells) < 2:
+                if len(cells) < 2 and not narrow_single:
                     continue
                 rs = [p[0] for p in cells]
                 cs = [p[1] for p in cells]
