@@ -71,7 +71,7 @@ if exist "%INPUT%\" (
 )
 set "META_ARG="
 if defined METADATA if exist "%METADATA%" set "META_ARG=--metadata "%METADATA%""
-%PY% build_dataset_with_ascii.py --input_file "%INPUT%" --output "%RAW%" --tileset %TILESET% --convert_to_extended --sliding_window --stride %STRIDE% %META_ARG%
+%PY% -m mm2pipeline.dataset build --input_file "%INPUT%" --output "%RAW%" --tileset %TILESET% --convert_to_extended --sliding_window --stride %STRIDE% %META_ARG%
 if errorlevel 1 goto error
 
 echo.
@@ -80,7 +80,7 @@ REM LevelDataset still wants a "caption" key on every item even unconditionally,
 REM so stamp an empty one; the trainer returns it but never uses it.
 %PY% -c "import json,sys;d=json.load(open(sys.argv[1],encoding='utf-8'));[e.setdefault('caption','') for e in d];json.dump(d,open(sys.argv[1],'w',encoding='utf-8'))" "%RAW%"
 if errorlevel 1 goto error
-%PY% split_mario_maker_data.py --json "%RAW%" --seed %SEED%
+%PY% -m mm2pipeline.dataset split --json "%RAW%" --seed %SEED%
 if errorlevel 1 goto error
 
 echo.

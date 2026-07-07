@@ -23,7 +23,7 @@ Target tilesets, most aggressive to least (see build_extended_tilesets.py):
     extended_tiles.json                                  (hand-picked ~17, default)
 
 Pick one with --tileset (CLI) or set_target() (when imported, e.g. by
-bucket_levels_by_size.py / build_dataset_with_ascii.py).
+bucket_levels_by_size.py / mm2pipeline.dataset).
 
 Usage:
     python mm2view_to_extended.py input_level.txt [output_level.txt] --tileset extended_tiles_30.json

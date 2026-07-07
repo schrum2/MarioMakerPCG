@@ -403,7 +403,7 @@ class TileViewer(tk.Tk):
 
             # Normalize every sample to a dict with 'scene' and 'captions' keys.
             # Some datasets are raw scene grids (list of lists); others are
-            # dicts missing 'caption'/'captions' (e.g. build_dataset_with_ascii.py's
+            # dicts missing 'caption'/'captions' (e.g. mm2pipeline.dataset's
             # {'name', 'scene'} output).
             normalized_dataset = []
             for item in self.dataset:

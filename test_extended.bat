@@ -68,7 +68,7 @@ echo.
 echo === [2/6] presence-based ascii captions + train/validate/test split + tokenizer ===
 %PY% MarioMaker_create_ascii_captions.py --dataset "%RAW%" --tileset %TILESET% --output "%CAPTIONED%"
 if errorlevel 1 goto error
-%PY% split_mario_maker_data.py --json "%CAPTIONED%" --seed %SEED%
+%PY% -m mm2pipeline.dataset split --json "%CAPTIONED%" --seed %SEED%
 if errorlevel 1 goto error
 %PY% tokenizer.py save --json_file "%BASE%-train.json" --pkl_file "%TOKENIZER%"
 if errorlevel 1 goto error

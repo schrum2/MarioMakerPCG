@@ -3,6 +3,25 @@
 # Setting up
 Run `pip install -r requirements.txt`
 
+# The conversion pipeline (mm2pipeline)
+
+Every format conversion (HuggingFace dump -> .bcd -> JSON/PNG -> ASCII ->
+dataset -> generated ASCII -> JSON -> playable .swe) lives in the
+[mm2pipeline](mm2pipeline/README.md) package and runs through one entry point:
+
+```
+python -m mm2pipeline <command>     (extract | toost | json-to-ascii | dataset | ascii-to-json | swe)
+```
+
+See [mm2pipeline/README.md](mm2pipeline/README.md) for full instructions and
+walkthroughs. Common one-liners:
+
+**Build a dataset from ASCII level files:**
+python -m mm2pipeline dataset build --input_file <input.txt or folder> --output <dataset_name>.json --tileset extended_tiles.json --sliding_window --stride 20 --convert_to_extended
+
+**Convert a level .json to SWE (playable in SMM: World Engine):**
+python -m mm2pipeline swe <json file or folder> -o <output .swe path or folder> --user <username>
+
 # Running Bat Files
 
 **Extract real MM2 levels to ASCII** (bcd -> json -> images -> ascii)
@@ -31,12 +50,6 @@ python mm2_viewer_json.py <level.json>
 **Run the ASCII dataset browser**
 python ascii_data_browser.py <dataset.json> <tileset.json>
 
-**Build a dataset from ASCII level files (with captions):**
-python build_dataset_with_ascii.py --input_file <input.txt or folder> --output <dataset_name>.json --tileset extended_tiles.json --sliding_window --stride 20 --convert_to_extended
-
 **Converting a .json to BCD**
 python json_to_bcd.py <exact .json file location> --toost-compat
 --toost-compat is optional however it will make some custom levels appear in toost
-
-**Converting a .json to SWE**
-python json_to_swe.py <json file or folder> -o <output .swe path or folder> --user <username>

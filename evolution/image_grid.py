@@ -288,8 +288,8 @@ class ImageGridViewer:
     def _compose_swe_bytes(self, name):
         """Convert the merged composed scene to a .swe (ascii -> json -> swe).
         Returns (swe_bytes, dropped_counts)."""
-        from mm2_ascii_to_json import ascii_to_level
-        from json_to_swe import build_world, encode_swe, detect_smmwe_user
+        from mm2pipeline.ascii import ascii_to_level
+        from mm2pipeline.swe import build_world, encode_swe, detect_smmwe_user
         from datetime import datetime
 
         sample = self.get_sample_output(self._merge_composed_scenes())

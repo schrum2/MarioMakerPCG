@@ -204,18 +204,10 @@ GROUND_COLOR = "#8B6914"
 GROUND_CHAR  = "#"
 
 # ---------------------------------------------------------------------------
-# ASCII export handling for objects whose OBJ_META glyph is NOT a real tile in
-# mm2_tileset_we.json (the canonical training tileset). Without this, those
-# glyphs silently collapse to the dataset's "unknown" tile, polluting training.
-# Two mechanisms, both keyed by the decoded object name:
-#
-#   ASCII_REPLACEMENTS   – approximate the object with a valid tileset glyph
-#   ASCII_DROP           – skip the object entirely (write nothing)
-#
-# 3D-World-exclusive objects (and levels containing objects with no static-tile
-# representation) are already filtered upstream in mm2pipeline.extract, so they
-# are NOT handled here — only non-3DW approximations and editor/decorative
-# markers remain. (See mm2pipeline.swe OBJ_ID_MAP for the SWE-side analogs.)
+# Folds for objects whose OBJ_META glyph isn't a real mm2_tileset_we.json tile;
+# without them the glyph collapses to the "unknown" tile at training time.
+# ASCII_REPLACEMENTS approximates with a valid glyph, ASCII_DROP skips entirely.
+# _check_tileset_coverage() enforces coverage at import.
 # ---------------------------------------------------------------------------
 ASCII_REPLACEMENTS = {
     "Spike Top":               "s",  # → Spiny
@@ -244,12 +236,8 @@ ASCII_REPLACEMENTS = {
     "Spike Ball":              "^",  # → Spikes
     "Icicle":                  "^",  # → Spikes (falling hazard)
 
-    # The remaining objects whose OBJ_META glyph is a leftover from the older,
-    # larger glyph set and isn't in mm2_tileset_we.json. Without an entry here
-    # they leak that raw glyph into the ASCII which then
-    # collapses to the unknown tile at training time. _check_tileset_coverage()
-    # below enforces that every drawable object lands on a real tileset glyph.
-    # Note a lot of these are already filtered out with extracting the levels.
+    # Objects whose OBJ_META glyph is a leftover from the older, larger glyph
+    # set; most are also filtered out during extraction.
     # terrain / blocks
     "Donut":                   "d",  # → Donut Block (same falling platform)
     "Blinking Block":          "O",  # → ON/OFF block (togglable solid)
@@ -282,8 +270,7 @@ ASCII_REPLACEMENTS = {
     "Fast Conveyor Belt":      "k",  # → Semisolid platform
     "Snake Block":             "k",  # → Semisolid platform (moving path)
     "Track Block":             "k",  # → Semisolid platform (track-riding block)
-    # Slopes are special-drawn as a ground staircase (see ascii.py); '#' just
-    # records that reduction so the coverage check below stays happy.
+    # Slopes are drawn as a ground staircase (see ascii.py); '#' records that.
     "Slight Slope":            "#",  # → Ground (staircase fill)
     "Steep Slope":             "#",  # → Ground (staircase fill)
 }
@@ -297,15 +284,9 @@ ASCII_DROP = {
 
 
 def _check_tileset_coverage():
-    """Every object we actually draw must end up on a glyph the tileset knows.
-
-    OBJ_META still carries glyphs from the older, larger vocabulary; the ones
-    missing from mm2_tileset_we.json have to be folded onto a real tile via
-    ASCII_REPLACEMENTS (or skipped via ASCII_DROP), or they leak into the ASCII
-    as a raw Latin-1 char and silently become the unknown tile in training --
-    the bug that let Donut's "Ã" through. Run at import so a later OBJ_META edit
-    that forgets the fold fails loudly here instead of polluting a dataset.
-    """
+    """Fail at import if any drawable object lands on a glyph the tileset doesn't
+    have -- it would otherwise become the unknown tile in training. Add the
+    object to ASCII_REPLACEMENTS or ASCII_DROP to fix."""
     leaks = {}
     for name, (glyph, _color, _cat) in OBJ_META.items():
         if name == "_unknown" or name in ASCII_DROP:
@@ -334,37 +315,31 @@ CAT_COLORS = {
     CAT_OTHER:    "#AAAAAA",
 }
 
-# Style Power-up: objects.id 44 ("Big Mushroom") is decoded with a fixed SMB1
-# name, but the power-up actually granted (and its sprite) depends on the
-# level's gamestyle_raw. See mm2_json_field_dictionary.txt §5 for the mapping.
-# (The id-81 "SMB2 Mushroom" slot B is intentionally absent: SMM:WE has no
-# equivalent, so those levels are dropped at extraction -- see bcd.SKIP_ITEM_NAMES.)
+# Style Power-up (id 44): the decoder emits a fixed name, but the actual
+# power-up depends on gamestyle_raw.
 STYLE_POWERUP_NAMES = {
-    "Big Mushroom": {     # Slot A (id 44, since v1.0.0)
-        12621: "Big Mushroom",       # SMB1   -> Mega Mario
-        13133: "Super Leaf",         # SMB3   -> Raccoon Mario
-        22349: "Cape Feather",        # SMW    -> Cape Mario
-        21847: "Propeller Mushroom",  # NSMBU  -> Propeller Mario
+    "Big Mushroom": {
+        12621: "Big Mushroom",        # SMB1
+        13133: "Super Leaf",          # SMB3
+        22349: "Cape Feather",        # SMW
+        21847: "Propeller Mushroom",  # NSMBU
     },
 }
 
-# Style Ride: objects.id 45 (decoded by the level parser as "Shoe Goomba")
-# is a fixed SMB1/SMB3 name, but in SMW/NSMBU the same slot is a Yoshi's Egg
-# that hatches into a rideable Yoshi. See mm2_json_field_dictionary.txt §6.
+# Style Ride (id 45): a shoe in SMB1/SMB3, a Yoshi's Egg in SMW/NSMBU.
 STYLE_RIDE_NAMES = {
-    "Shoe Goomba": {    # Slot (id 45) — decoder's actual name for this object
-        12621: "Goomba's Shoe",  # SMB1
-        13133: "Goomba's Shoe",  # SMB3
-        22349: "Yoshi's Egg",    # SMW
-        21847: "Yoshi's Egg",    # NSMBU
+    "Shoe Goomba": {
+        12621: "Goomba's Shoe",
+        13133: "Goomba's Shoe",
+        22349: "Yoshi's Egg",
+        21847: "Yoshi's Egg",
     },
 }
 
 
 def resolve_obj_name(obj_name: str, gamestyle_raw: int) -> str:
-    """Map a decoded object name to its gamestyle-correct name for
-    the Style Power-up slot (id 44) and the Style Ride slot (id 45);
-    passes through unchanged otherwise."""
+    """Gamestyle-correct name for the Style Power-up (44) / Ride (45) slots;
+    pass-through otherwise."""
     for table in (STYLE_POWERUP_NAMES, STYLE_RIDE_NAMES):
         variants = table.get(obj_name)
         if variants:
@@ -381,10 +356,8 @@ def get_meta(name: str):
 # ---------------------------------------------------------------------------
 
 def build_char_to_name():
-    """Invert OBJ_META char -> name. First name listed for a glyph wins, which
-    yields sensible canonical picks (Ground for '#', Block for 'B', Hard Block
-    for 'H', Piranha Plant for 'P', Big Mushroom for 'E', ...). '_unknown' and
-    its '?' glyph are skipped here; unmapped glyphs fall back to '_unknown'."""
+    """Invert OBJ_META to glyph -> name; first name per glyph wins. '_unknown'
+    is skipped."""
     char_to_name = {}
     for name, (char, _color, _cat) in OBJ_META.items():
         if name == "_unknown":
@@ -395,11 +368,8 @@ def build_char_to_name():
 
 CHAR_TO_NAME = build_char_to_name()
 
-# OBJ_META display name -> MM2 object id (level.ksy obj_id enum). Keyed by the
-# canonical names in OBJ_META so the values CHAR_TO_NAME produces resolve
-# directly. Gamestyle-variant aliases (Super Leaf, Cape Feather, Yoshi's Egg, ...)
-# point at their shared slot id. "Ground" is intentionally absent: the '#' glyph goes
-# to the `ground` array, never `objects`.
+# Object name -> MM2 object id. Variant aliases share a slot id. "Ground" is
+# absent: '#' goes to the `ground` array, never `objects`.
 NAME_TO_ID = {
     # terrain / blocks
     "Block": 4, "Hard Block": 6, "Stone": 6, "? Block": 5, "Hidden Block": 29,
@@ -452,16 +422,10 @@ NAME_TO_ID = {
 # ---------------------------------------------------------------------------
 # Items stored INSIDE a block
 # ---------------------------------------------------------------------------
-# An item placed inside a block (Brick / ? Block / Hidden Block) is NOT a
-# separate objects[] entry: the block stores the contained item's MM2 object id
-# in its `cid` field (see mm2pipeline.swe BLOCK_SPROUT_MAP / json_to_bcd, which
-# packs `cid` straight into the .bcd). CONTAINER_BLOCK_IDS gates which objects
-# can carry such a child; CID_ITEM_NAME maps that child id back to an OBJ_META
-# name so the contained item can be drawn with the item's own glyph (one tile
-# above the block in the forward path) or recovered into `cid` on the way back.
-#
-# CID_ITEM_NAME is derived from the item (CAT_ITEM) rows of NAME_TO_ID -- first
-# canonical name per id wins, matching the explicit copy in mm2_json_to_ascii.py.
+# A block stores its contained item's MM2 id in `cid`, not as a separate object.
+# CONTAINER_BLOCK_IDS gates which blocks can carry one; CID_ITEM_NAME maps that
+# id back to a name so the item can be drawn above the block (forward) or folded
+# into `cid` (reverse). CID_ITEM_NAME takes the first item name per id.
 CONTAINER_BLOCK_IDS = {4, 5, 29}  # Block (brick), ? Block, Hidden Block
 CONTAINER_BLOCK_NAMES = {"Block", "? Block", "Hidden Block"}
 
@@ -473,9 +437,8 @@ for _name, _oid in NAME_TO_ID.items():
 
 
 def contained_item_glyph(cid, gamestyle_raw):
-    """Glyph for the item a block holds in its `cid`, or None for an empty/
-    unrecognized block. Resolved exactly like a free-standing object so the
-    contained item reads identically to one placed in the open."""
+    """Glyph for a block's contained item (cid), or None. Resolved like a
+    free-standing object."""
     name = CID_ITEM_NAME.get(cid)
     if name is None:
         return None
@@ -486,8 +449,8 @@ def contained_item_glyph(cid, gamestyle_raw):
 
 
 # ---------------------------------------------------------------------------
-# Game style / theme maps (single copy; were duplicated in mm2_ascii_to_json.py
-# and mm2pipeline.swe uses its own SWE-int variants).
+# Game style / theme maps (single copy for the whole pipeline;
+# mm2pipeline.swe uses its own SWE-int variants).
 # ---------------------------------------------------------------------------
 
 GAMESTYLE_RAW = {

@@ -11,9 +11,11 @@ Stages
     dataset   ASCII  ->  tile-id dataset + split (mm2pipeline.dataset)
     swe       .json  ->  .swe (playable)      (mm2pipeline.swe)
 
-Each stage module exposes a ``main()`` so it runs as ``python -m mm2pipeline.<stage>``.
-The shared object metadata lives in ``mm2pipeline.tiles``; the binary .bcd
-codec lives in ``mm2pipeline.bcd``.
+``python -m mm2pipeline <command>`` (see ``mm2pipeline.__main__``) dispatches to
+the stages; each stage module also exposes a ``main()`` so it runs directly as
+``python -m mm2pipeline.<stage>``. The shared object metadata lives in
+``mm2pipeline.tiles``; the binary .bcd codec lives in ``mm2pipeline.bcd``.
+See mm2pipeline/README.md for full usage instructions.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

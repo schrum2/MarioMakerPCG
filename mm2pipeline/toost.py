@@ -4,6 +4,10 @@ toost.exe lives in toost_stuff/bin/ and loads its sprite/font assets relative to
 its working directory (toost_stuff/), so the subprocess is run with that folder
 as cwd. All input/output paths are resolved to absolute first, so conversion
 works regardless of where this module is invoked from.
+
+If the input folder carries a level_metadata.json index (written by
+mm2pipeline.extract), each level's server-side difficulty/tags are folded into
+the exported JSONs, since Toost can't emit fields that aren't in the .bcd.
 """
 import os
 import sys
@@ -62,6 +66,36 @@ def world_size(json_path):
         return 0
 
 
+def load_metadata_index(input_dir):
+    # level_metadata.json (from mm2pipeline.extract) maps each .bcd stem to the
+    # server-side fields that aren't in the .bcd payload: {difficulty, tags}.
+    path = os.path.join(input_dir, "level_metadata.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print_warn(f"Could not read metadata index '{path}': {e}")
+        return {}
+
+
+def attach_metadata(json_path, meta):
+    # Toost doesn't know about tags or difficulty (they aren't in the .bcd), so
+    # fold them into the JSON alongside the fields Toost did decode.
+    if not os.path.isfile(json_path):
+        return
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            data = json.load(f)
+        data["tags"] = meta.get("tags", [])
+        data["difficulty"] = meta.get("difficulty")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception as e:
+        print_warn(f"Could not attach metadata to '{json_path}': {e}")
+
+
 def batch_convert(exe, input_dir, output_dir, images_dir, min_objects,
                   remove_grid, objects_over_pipes):
     input_dir = os.path.abspath(input_dir)
@@ -76,7 +110,10 @@ def batch_convert(exe, input_dir, output_dir, images_dir, min_objects,
 
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(images_dir, exist_ok=True)
+    metadata_index = load_metadata_index(input_dir)
     print_info(f"Processing {len(bcd_files)} file(s) -> {output_dir} (json) / {images_dir} (images)")
+    if metadata_index:
+        print_info(f"Loaded metadata for {len(metadata_index)} level(s) from level_metadata.json")
     print("-" * 60)
 
     ok = skipped = failed = 0
@@ -106,6 +143,11 @@ def batch_convert(exe, input_dir, output_dir, images_dir, min_objects,
             failed += 1
             continue
 
+        # Metadata applies to the whole level: overworld always, subworld if kept.
+        meta = metadata_index.get(stem)
+        if meta is not None:
+            attach_metadata(ow_json, meta)
+
         # Remove subworld JSON/PNG if it's below the size threshold
         sub_size = world_size(sub_json)
         if sub_size < min_objects:
@@ -115,6 +157,8 @@ def batch_convert(exe, input_dir, output_dir, images_dir, min_objects,
             print(f"\033[92mOK\033[0m  \033[93m(subworld skipped: {sub_size} objects)\033[0m")
             skipped += 1
         else:
+            if meta is not None:
+                attach_metadata(sub_json, meta)
             print("\033[92mOK\033[0m")
 
         ok += 1
@@ -123,7 +167,7 @@ def batch_convert(exe, input_dir, output_dir, images_dir, min_objects,
     print_success(f"Done: {ok}/{len(bcd_files)} converted, {skipped} empty subworlds dropped, {failed} failed.")
 
 
-def main():
+def main(argv=None):
     os.system("color")
 
     parser = argparse.ArgumentParser(description="Batch convert SMM2 .bcd level files to JSON and PNG images.")
@@ -134,14 +178,14 @@ def main():
                         help="Minimum object+ground count to keep a subworld (default: 1)")
     parser.add_argument("--remove-grid",        action="store_true", help="Render without grid")
     parser.add_argument("--objects-over-pipes", action="store_true", help="Render objects over pipes")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     exe = find_exe()
     if not exe:
         print_error(f"Could not find '{EXE_NAME}'.")
-        print_info("Build it once by running these commands in an MSYS2 MinGW64 terminal:")
-        print_info("  cd /c/Users/mckeonp/Documents/GitHub/toost")
-        print_info("  mingw32-make BUILD=release")
+        print_info(f"Expected it at {TOOST_DIR / 'bin' / EXE_NAME} (or on PATH).")
+        print_info("Build it from https://github.com/TheGreatRambler/toost in an "
+                   "MSYS2 MinGW64 terminal with: mingw32-make BUILD=release")
         sys.exit(1)
     print_success(f"Using exe: {exe}")
 

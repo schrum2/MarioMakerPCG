@@ -231,15 +231,9 @@ def build_bcd(plaintext: bytes) -> bytes:
             f"Plaintext must be exactly {PAYLOAD_SIZE} bytes, got {len(plaintext)}"
         )
 
-    # Choose a fixed-but-valid seed and IV.
-    # Using the same seed every time is fine — encryption is deterministic
-    # and toost only cares about decrypting correctly.
-    # We use a reproducible non-zero seed so rand_init doesn't fall back to defaults.
+    # Fixed non-zero seed and IV; toost only needs the payload to decrypt.
     s0, s1, s2, s3 = 0xDEADBEEF, 0xCAFEBABE, 0x12345678, 0x9ABCDEF0
-    iv_bytes = bytes([
-        0x4E, 0x69, 0x6E, 0x74, 0x65, 0x6E, 0x64, 0x6F,
-        0x4D, 0x61, 0x6B, 0x65, 0x72, 0x32, 0x30, 0x31,
-    ])  # "NintendoMaker201" — arbitrary, consistent
+    iv_bytes = b"NintendoMaker201"  # arbitrary, consistent
 
     state = rand_init(s0, s1, s2, s3)
     key_bytes = gen_key(COURSE_KEY_TABLE, state)

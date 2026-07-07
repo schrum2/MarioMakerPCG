@@ -1,7 +1,7 @@
 """Metrics over Mario Maker 2 level scenes (68-tile mm2_tileset_we encoding).
 
-1. Broken structure detection. mm2_json_to_ascii paints every object as a w x h
-   block of one glyph, and mm2_ascii_to_json's COALESCE_POLICY records the
+1. Broken structure detection. mm2pipeline.ascii paints every object as a w x h
+   block of one glyph, and mm2pipeline.ascii's COALESCE_POLICY records the
    footprint each object should have. A blob that doesn't form its footprint is
    visibly wrong -- the repair pass just stamps it into enough valid objects to
    cover it (a scattered clump of '!' becomes several 2x2 Boom Booms).
@@ -23,8 +23,8 @@ import torch
 # Repo root on the path so the converter modules resolve from the util dir.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mm2_json_to_ascii import OBJ_META
-from mm2_ascii_to_json import (COALESCE_POLICY, CHAR_TO_NAME, PLATFORM_MIN_SIZE,
+from mm2pipeline.tiles import OBJ_META, CHAR_TO_NAME
+from mm2pipeline.ascii import (COALESCE_POLICY, PLATFORM_MIN_SIZE,
                                _connected_components, _runs)
 
 _FIXED, _BBOX, _MUSHROOM, _HRUN, _VRUN, _PIPE = (
@@ -209,7 +209,7 @@ def count_structures(scene, id_to_char):
 
     Returns {feature name: {"total": n, "broken": m}} covering every feature
     with a defined footprint that appears in the scene. Coordinates are
-    (col, row) with row 0 at the bottom, matching mm2_ascii_to_json.
+    (col, row) with row 0 at the bottom, matching mm2pipeline.ascii.
     """
     scene_h = len(scene)
     scene_w = len(scene[0]) if scene_h else 0

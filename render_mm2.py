@@ -27,7 +27,7 @@ _mm2_tilesheet_cache = {}  # {(gamestyle, theme): PIL RGBA of img/tile/<raw>-<th
 
 # Gamestyles tried in order when the requested style lacks a sprite for an
 # object (e.g. style-exclusive items). SMW first because that is the pipeline
-# default (mm2_ascii_to_json.py --gamestyle smw).
+# default (mm2pipeline.ascii to-json --gamestyle smw).
 _MM2_STYLE_FALLBACK = ("SMW", "SMB1", "SMB3", "NSMBU", "SM3DW")
 _MM2_GAMESTYLE_RAW = {
     "SMB1": 12621, "SMB3": 13133, "SMW": 22349, "NSMBU": 21847, "SM3DW": 22323,
@@ -158,7 +158,7 @@ _MM2_GROUND_GS = [int(t, 16) for t in re.findall(r"0x[0-9A-Fa-f]{2}", _MM2_GS_RA
 # Green pipe cells (PipeLoc[0] in LevelDrawer::Setup), indexed exactly as toost:
 # 0=top mouth, 1=bottom mouth, 2=left mouth, 3=right mouth, 4=horizontal body
 # (1 wide x 2 tall), 5=vertical body (2 wide x 1 tall). Reconstructed pipes are
-# always green (flag PP bits = 0; see mm2_ascii_to_json DEFAULT_FLAG).
+# always green (flag PP bits = 0; see mm2pipeline.ascii DEFAULT_FLAG).
 _MM2_PIPE_LOC = [(14, 0), (14, 2), (11, 0), (13, 0), (12, 0), (14, 1)]
 
 # Multi-tile sprite stamping policy (Pass 1 of _render_mm2_samples), keyed by the
@@ -307,7 +307,7 @@ def _mm2_glyph_objids():
     `chars` is the glyph order extract_tileset() uses (sorted glyphs + the '_'
     padding tile), so index i is model tile id i. `char_to_objid` maps each glyph
     to its MM2 object id (or None for sky/ground/unresolved), via OBJ_META (first
-    name listed for a glyph wins, as in mm2_ascii_to_json.build_char_to_name) ->
+    name listed for a glyph wins, as in mm2pipeline.tiles.build_char_to_name) ->
     NAME_TO_ID. Shared by mm2_tiles() and the block-stamping renderer so they
     never drift.
     """
@@ -319,8 +319,7 @@ def _mm2_glyph_objids():
     if "_" not in chars:
         chars = chars + ["_"]
 
-    from mm2_json_to_ascii import OBJ_META
-    from mm2_ascii_to_json import NAME_TO_ID
+    from mm2pipeline.tiles import OBJ_META, NAME_TO_ID
     char_to_name = {}
     for name, (ch, _color, _cat) in OBJ_META.items():
         if name == "_unknown":
@@ -342,7 +341,7 @@ def _mm2_glyph_colors():
     colour-coded to the object reads far better than a field of identical grey
     squares. First OBJ_META name per glyph wins, matching _mm2_glyph_objids.
     """
-    from mm2_json_to_ascii import OBJ_META
+    from mm2pipeline.tiles import OBJ_META
     colors = {}
     for name, (ch, color_hex, _cat) in OBJ_META.items():
         if name == "_unknown" or ch in colors:
@@ -513,7 +512,7 @@ def _mm2_paste_region(canvas, region, c, r, cw, ch, ts):
 def _mm2_autotile(grid, canvas, consumed, chars, gamestyle, ts):
     """Render multi-tile tile-structures with edge-aware tiles, marking consumed.
 
-    This is the rendering-side analogue of mm2_ascii_to_json.coalesce(): instead
+    This is the rendering-side analogue of mm2pipeline.ascii.coalesce(): instead
     of one flat cell per glyph, it groups the glyph's cells (8-neighbour bitmask
     for ground, 4-connected components for the rest) and stamps the correct
     *edge* piece for each position, so a ground field gets grass tops and inner
@@ -636,7 +635,7 @@ def _mm2_autotile(grid, canvas, consumed, chars, gamestyle, ts):
 def _render_mm2_samples(sample_indices, output_dir, start_index, prompts, gamestyle=None):
     """Render MM2 scenes, reconstructing multi-tile objects from their glyph blocks.
 
-    The forward converter (mm2_json_to_ascii) paints each object as a block of its
+    The forward converter (mm2pipeline.ascii) paints each object as a block of its
     glyph -- a Thwomp is a 2x2 patch of 't', a Skewer a 4x4 patch of '0', a
     Swinging Claw a 3x4 patch of 'j'. Three passes turn those blocks back into art:
 

@@ -1112,7 +1112,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         dataset = json.load(f)
 
     # --with-images consumes the per-sample 'image' paths emitted by
-    # build_dataset_with_ascii.py --with_images, stored relative to the dataset
+    # mm2pipeline.dataset build --with_images, stored relative to the dataset
     # JSON's own folder. Resolve them against that folder.
     dataset_dir = os.path.dirname(os.path.abspath(dataset_path))
     if with_images:
@@ -1122,7 +1122,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         if not has_any_image:
             print(
                 "ERROR: --with-images was set, but no items in the dataset carry an "
-                "'image' path.\n  Rebuild the dataset with build_dataset_with_ascii.py "
+                "'image' path.\n  Rebuild the dataset with 'python -m mm2pipeline dataset build' "
                 "--with_images so each sample gets a cropped PNG, then retry."
             )
             sys.exit(1)
@@ -1598,7 +1598,7 @@ def main():
         help=(
             "Also send each level's rendered PNG crop to the model to supplement the "
             "ASCII/token grid. The crops are the ones produced by "
-            "build_dataset_with_ascii.py --with_images (one per sample, referenced by the "
+            "mm2pipeline.dataset build --with_images (one per sample, referenced by the "
             "dataset's 'image' field). REQUIRES a vision-capable model and a backend that "
             "accepts images (claude, openai, gemini, or an Ollama vision model such as "
             "llama3.2-vision / llava / qwen2.5vl)."

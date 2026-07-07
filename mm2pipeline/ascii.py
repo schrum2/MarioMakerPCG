@@ -1,16 +1,18 @@
-"""Convert between MM2 level JSON (toost's export) and the simplified ASCII grid
-the diffusion model trains on.
+"""Convert between MM2 level JSON (toost's export) and the ASCII grid the
+diffusion model trains on.
 
-Forward  (json -> ascii):  ``json_to_ascii_file`` / ``main_json_to_ascii``
-Reverse  (ascii -> json):  ``ascii_to_level`` / ``ascii_to_json_file`` / ``main_ascii_to_json``
+Usage:
+    python -m mm2pipeline.ascii to-ascii <json_folder> <ascii_folder>
+    python -m mm2pipeline.ascii to-json  <txt file or folder> <json_folder>
 
-Both directions read their object metadata from ``mm2pipeline.tiles`` (built
-around mm2_tileset_we.json). The forward path is lossy at the glyph level
-(ASCII_REPLACEMENTS / ASCII_DROP); the reverse path is lossy at the object level
-(every glyph comes back as a 1x1 baseline object). See the per-function notes.
+Object metadata comes from mm2pipeline.tiles. Both directions are lossy: the
+forward path folds off-tileset glyphs (ASCII_REPLACEMENTS / ASCII_DROP), the
+reverse path rebuilds baseline objects via coalesce() plus semisolid and
+goal repair.
 """
 import json
 import os
+import sys
 import argparse
 from pathlib import Path
 
@@ -34,7 +36,7 @@ from .tiles import (
 )
 
 # ===========================================================================
-# Forward: JSON -> ASCII   (was mm2_json_to_ascii.py)
+# Forward: JSON -> ASCII
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
@@ -54,11 +56,8 @@ _PIPE_DIR_CHAR = {'R': '→', 'L': '←', 'U': '↑', 'D': '↓'}
 # Tile size helper — uses w/h from JSON directly (already tile counts)
 # ---------------------------------------------------------------------------
 def obj_tile_size(obj: dict):
-    """Return (w_tiles, h_tiles). The JSON w/h fields are direct tile counts.
-
-    Pipes use h as the pipe length (C++ objH) regardless of direction;
-    the cross-section is always 2 tiles wide/tall.
-    """
+    """(w, h) in tiles. Pipes use h as length regardless of direction; the
+    cross-section is always 2."""
     if obj.get("name") == "Pipe":
         direction = _pipe_direction(obj.get("flag", 0))
         length = max(1, obj.get("h", 1))
@@ -71,11 +70,8 @@ def obj_tile_size(obj: dict):
     return w, h
 
 
-# Objects whose x coordinate is the left-tile center (x = col*160 + 80).
-# The C++ drawer uses the per-tile formula  j - 0.5 + x/160  for these,
-# so  col = x // 160  is already correct — no w//2 correction.
-# Everything else (Thwomp, Skewer, Lift, Saw, Arrow, Donut, …) uses the
-# center-of-span formula  -w/2 + x/160  →  col = x//160 - w//2.
+# Objects whose x is the left-tile center (col = x // 160); everything else
+# stores the center of its span (col = x//160 - w//2).
 _LEFT_ANCHOR = frozenset({
     "Pipe",
     "Bridge",
@@ -94,19 +90,9 @@ _LEFT_ANCHOR = frozenset({
 
 
 def obj_anchor(obj: dict):
-    """Return (col, row) — bottom-left tile of the object.
-
-    Left-anchor objects store x as the left-tile center (x = col*160 + 80)
-    and are drawn per-tile with  j - 0.5 + x/160  in the C++ renderer.
-    All other objects store x as the center of their full bounding span and
-    are drawn with  -w/2 + x/160  — equivalent to  x//160 - w//2  for both
-    even-width (x%160==0) and odd-width (x%160==80) cases.
-    y is always the bottom-tile center for all JSON objects, so
-    row = y // 160 is always correct.
-
-    Pipes require direction-specific anchor adjustment derived from the C++
-    rendering offsets for each direction case.
-    """
+    """(col, row) of the object's bottom-left tile. Left-anchor objects use
+    col = x // 160, everything else col = x//160 - w//2; row = y // 160.
+    Pipes get direction-specific adjustments from the C++ renderer."""
     if obj.get("name") == "Pipe":
         direction = _pipe_direction(obj.get("flag", 0))
         base_col = obj["x"] // 160
@@ -236,8 +222,7 @@ def build_ascii_grid(level):
         for obj in objects:
             obj_name = obj.get("name","_unknown")
 
-            # Objects with no tileset glyph are dropped entirely (writing an
-            # empty string into cells would misalign the row on "".join()).
+            # No glyph -> dropped (an empty string would misalign the row).
             if obj_name in ASCII_DROP:
                 continue
 
@@ -253,9 +238,7 @@ def build_ascii_grid(level):
                 char = ASCII_REPLACEMENTS[obj_name]
 
             if obj_name in _SLOPE_NAMES:
-                # Slopes have no flat-ASCII diagonal equivalent, so fill their
-                # footprint as a solid ascending/descending staircase of
-                # ground -- mirrors slope_fill_cells() in mm2pipeline.swe.
+                # Slopes become a ground staircase (mirrors swe.slope_fill_cells).
                 col, row = obj_anchor(obj)
                 w, h = obj_tile_size(obj)
                 step = 2 if obj.get("id") == 87 else 1
@@ -278,13 +261,11 @@ def build_ascii_grid(level):
             elif obj_name == "Bridge":
                 col,row = obj_anchor(obj)
                 w,_ = obj_tile_size(obj)
-                # Only the bottom (walkable) row is kept; the rope/chain
-                # row above it is decorative and gets dropped.
+                # Keep only the walkable bottom row.
                 for dx in range(w):
                     set_cell(col+dx,row,char)
             elif obj_name == "Big Coin":
-                # Draw the Big Coin as a 2x2 cluster of regular coins so it
-                # reads as "more than one coin" in the grid.
+                # Big Coin reads as a 2x2 cluster of coins.
                 col,row = obj_anchor(obj)
                 coin_char,_,_ = get_meta("Coin")
                 for dx in range(2):
@@ -298,10 +279,8 @@ def build_ascii_grid(level):
                     for dy in range(h):
                         set_cell(col+dx,row+dy,char)
 
-    # Final pass: surface any item stored inside a block (the block's `cid`) as
-    # the item's glyph one tile directly above the block. Drawn last, and only
-    # into a still-empty cell, so it never clobbers terrain/objects resting on
-    # the block (an in-block item normally has air above it anyway).
+    # Surface each block's contained item (cid) as its glyph one tile above
+    # the block, only into a still-empty cell.
     gamestyle_raw = level.get("gamestyle_raw", 0)
     for obj in objects:
         if obj.get("id") not in CONTAINER_BLOCK_IDS:
@@ -320,7 +299,19 @@ def build_ascii_grid(level):
     return ["".join(r).rstrip() for r in grid]
 
 
-def json_to_ascii_file(infile, outdir):
+def level_metadata(lvl):
+    """Human-readable fields to carry into the dataset. tags/difficulty were
+    folded in earlier by mm2pipeline.toost."""
+    return {
+        "level_name": lvl.get("name", ""),
+        "difficulty": lvl.get("difficulty"),
+        "gamestyle": lvl.get("gamestyle"),
+        "theme": lvl.get("theme"),
+        "tags": lvl.get("tags", []),
+    }
+
+
+def json_to_ascii_file(infile, outdir, metadata=None):
     data = json.loads(Path(infile).read_text(encoding="utf-8"))
     levels = data if isinstance(data, list) else [data]
 
@@ -331,79 +322,73 @@ def json_to_ascii_file(infile, outdir):
     for idx,lvl in enumerate(levels, start=1):
         stem = Path(infile).stem
         suffix = f"_{idx}" if len(levels) > 1 else ""
-        outfile = Path(outdir) / f"{stem}{suffix}.txt"
+        out_stem = f"{stem}{suffix}"
+        outfile = Path(outdir) / f"{out_stem}.txt"
         outfile.write_text("\n".join(build_ascii_grid(lvl)) + "\n", encoding="utf-8")
+        # Keyed by ascii stem so mm2pipeline.dataset can match it back.
+        if metadata is not None:
+            metadata[out_stem] = level_metadata(lvl)
 
 
-def main_json_to_ascii():
+def main_json_to_ascii(argv=None):
     ap = argparse.ArgumentParser(description="Convert MM2 level JSON to ASCII grids.")
     ap.add_argument("input_folder")
     ap.add_argument("output_folder")
-    args = ap.parse_args()
+    ap.add_argument("--metadata_output", default=None,
+                    help="Where to write the per-level metadata JSON (level_name, "
+                         "difficulty, gamestyle, theme, tags), keyed by ascii file "
+                         "stem. Default: <output_folder>/metadata.json. This is the "
+                         "file mm2pipeline.dataset reads with --metadata.")
+    args = ap.parse_args(argv)
 
     outdir = Path(args.output_folder)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    metadata = {}
     for jf in sorted(Path(args.input_folder).glob("*.json")):
         try:
-            json_to_ascii_file(jf, outdir)
+            json_to_ascii_file(jf, outdir, metadata)
             print(f"Converted {jf.name}")
         except Exception as e:
             print(f"Failed {jf.name}: {e}")
 
+    meta_path = Path(args.metadata_output) if args.metadata_output else outdir / "metadata.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"Wrote metadata for {len(metadata)} level(s) -> {meta_path}")
+
 
 # ===========================================================================
-# Reverse: ASCII -> JSON   (was mm2_ascii_to_json.py)
+# Reverse: ASCII -> JSON
 # ===========================================================================
 
 TILE = 160          # JSON sub-pixel units per tile (160 = 1 tile)
 TILE_CENTER = 80    # real .bcd objects anchor at the tile CENTER (col*160 + 80)
 GROUND_TILE_PX = 16  # boundary fields are in pixels (16 px / tile), per toost
 
-# Baseline object flag (0x6000040): the "normal", no-modifiers value seen on the
-# vast majority of objects in real levels (see mm2pipeline.swe). Orientation,
-# wings, parachutes, big-form, etc. can't be recovered from flat ASCII, so every
-# reconstructed object gets the baseline.
+# Baseline flag for reconstructed objects; modifiers can't be recovered from ASCII.
 DEFAULT_FLAG = 0x6000040
 
 
 def parse_ascii(text):
-    """Return (rows, width). Row 0 is the bottom of the level (game row 0),
-    matching the forward script's `grid[max_ty - 1 - row_game]` layout."""
+    """Return (rows, width) with rows[0] as game row 0 (bottom of the level)."""
     lines = text.split("\n")
-    # Drop only the single trailing empty line produced by the final "\n";
-    # interior/legitimate blank rows are preserved.
-    if lines and lines[-1] == "":
+    if lines and lines[-1] == "":     # drop the final "\n"; keep interior blanks
         lines.pop()
     width = max((len(l) for l in lines), default=0)
-    # File is written top-to-bottom (highest game row first), so reverse it to
-    # index from the bottom: rows[0] == game row 0.
-    rows = list(reversed(lines))
+    rows = list(reversed(lines))      # file is top-to-bottom; index from bottom
     return rows, width
 
 
-# Pipe direction is the low bits of `flag` (% 0x80): 0x00=R, 0x40=U. DEFAULT_FLAG
-# already carries 0x40, so a reconstructed vertical pipe is mouth-up by default;
-# a horizontal one clears those bits back to 0x00 (mouth-right). See coalesce().
-PIPE_FLAG_U = DEFAULT_FLAG               # 0x..40  -> Up   (build_pipes default)
-PIPE_FLAG_R = DEFAULT_FLAG & ~0x60       # 0x..00  -> Right
+# DEFAULT_FLAG already carries 0x40 (mouth-up); a horizontal pipe clears it.
+PIPE_FLAG_U = DEFAULT_FLAG
+PIPE_FLAG_R = DEFAULT_FLAG & ~0x60
 
 
 def make_object(name, col, row, w=1, h=1, flag=DEFAULT_FLAG):
-    """Build a base-schema object entry of size w x h with bottom-left tile at
-    (col, row).
-
-    Coordinates use the real .bcd convention the rest of the toolchain
-    (json_to_bcd.py / mm2_viewer_json.py / mm2pipeline.swe) consumes:
-
-      * left-anchored objects (Pipe, Mushroom/Semisolid/Bridge, One-Way Wall;
-        _REV_LEFT_ANCHOR) store x as the LEFT-tile centre  ->  x = col*160 + 80,
-        matching col = x // 160 in the decoders.
-      * everything else stores x as the CENTRE of its w-wide span  ->
-        x = (col + w//2)*160 + (80 if w odd else 0), matching col = x//160 - w//2.
-
-    y is always the bottom-row centre (row = y // 160). flags are the baseline
-    value (with the pipe direction folded in for pipes); cid/lid/sid unlinked."""
+    """Build a base-schema w x h object with bottom-left tile at (col, row).
+    Left-anchored objects (_REV_LEFT_ANCHOR) store x = col*160 + 80; everything
+    else stores the span centre. y is the bottom-row centre."""
     if name in _REV_LEFT_ANCHOR:
         x = col * TILE + TILE_CENTER
     else:
@@ -428,84 +413,55 @@ def make_object(name, col, row, w=1, h=1, flag=DEFAULT_FLAG):
 # ---------------------------------------------------------------------------
 # Multi-tile object coalescing (ASCII -> JSON)
 #
-# The forward painter (build_ascii_grid) draws each object as a w x h block of
-# its glyph using the real MM2 JSON w/h. Reading ASCII back one glyph at a time
-# would turn every cell into its own 1x1 object: a 2x2 Thwomp comes back as FOUR
-# thwomps, a 5-wide Mushroom Platform as five separate 1x1 platforms (each drawn
-# as a whole tiny mushroom by SMM:WE instead of stem + cap pieces), a 2-wide pipe
-# column as 2N length-1 pipes, two-tile doors as mispaired half-doors, and so on.
-#
-# coalesce() instead groups 4-connected same-glyph cells back into correctly
-# sized multi-tile objects, so json_to_swe / json_to_bcd / the viewer all see the
-# real footprint -- and SMM:WE renders ONE object with its proper internal pieces.
-#
-# Footprints/policies are grounded in the real toost JSON export (Bullet Bill
-# Blaster 1x2, Mushroom Platform variable, Big Coin 2x2, Checkpoint 2x2, Koopa
-# 1x1 -- all confirmed against the reference levels in big doc/1/json),
-# level_dataset.py's documented *painted* footprints (Thwomp 2x2, Skewer 4x4,
-# Swinging Claw 3x4) and mm2pipeline.swe (Thwomp's h=2 anchor, the platform S7
-# families). Objects NOT listed here stay 1x1 -- correct for blocks, coins,
-# spikes and every single-tile enemy. Listing a fixed-size object that turns out
-# to actually be 1x1 is harmless: clamping (below) still yields exactly one
-# object for an isolated cell. Only genuinely multi-tile objects are listed, so a
-# long row of (1x1) spikes/coins is never wrongly merged.
+# build_ascii_grid paints each object as a w x h block of its glyph. Reading it
+# back one cell at a time would make a 2x2 Thwomp four thwomps, an N-wide
+# platform N tiny ones, and so on. coalesce() regroups 4-connected same-glyph
+# cells into correctly-sized objects. Footprints below come from real toost JSON
+# exports; a few bosses with no sample are assumed 2x2 (harmless -- they're never
+# placed adjacent, and an isolated cell clamps to one object). Objects not listed
+# stay 1x1, so rows of spikes/coins are never merged.
 # ---------------------------------------------------------------------------
 _FIXED, _BBOX, _MUSHROOM, _HRUN, _VRUN, _PIPE = (
     "fixed", "bbox", "mushroom", "hrun", "vrun", "pipe")
 
-# Objects whose x is the LEFT-tile centre (col = x // 160), matching
-# OBJ_LEFT_ANCHOR_IDS in mm2pipeline.swe and _LEFT_ANCHOR in the forward path.
+# Objects whose x is the LEFT-tile centre (col = x // 160).
 _REV_LEFT_ANCHOR = frozenset({
     "Mushroom Platform", "Semisolid Platform", "Bridge", "Pipe",
     "One-Way Wall", "One-Way",
 })
 
-# name -> coalescing policy. _FIXED tiles a glyph block into fw x fh stamps (so a
-# row of two 2x2 thwomps becomes two thwomps, but an isolated <2x2 block clamps
-# to one); _BBOX emits one object covering the whole block; _MUSHROOM recovers a
-# cap+stem platform; _HRUN/_VRUN split into 1-tall / 1-wide runs; _PIPE rebuilds a
-# 2-wide directional pipe. Names are the canonical CHAR_TO_NAME outputs.
+# name -> policy. _FIXED tiles into fw x fh stamps, _BBOX one box per component,
+# _MUSHROOM a cap+stem platform, _HRUN/_VRUN 1-tall/1-wide runs, _PIPE a 2-wide
+# directional pipe. "confirmed" = seen in a real toost export.
 COALESCE_POLICY = {
-    # Fixed multi-tile sprites. Footprints confirmed against real toost JSON
-    # exports (runtest/json + bigdoc): Thwomp / Bowser / Big Coin / Checkpoint /
-    # Shoe-Egg are 2x2, Saw is 3x3, Swinging Claw 3x4, Skewer 4x4 (the last
-    # documented in level_dataset.py). Boom Boom / Banzai Bill / Angry Sun /
-    # Bowser Jr / Clown Car had no sample to confirm but are big single bosses
-    # assumed 2x2 -- they are never placed adjacent, so a wrong guess can't
-    # merge neighbours, and clamping makes an isolated <2x2 instance one object.
     "Thwomp":             (_FIXED, 2, 2),   # confirmed
     "Bowser":             (_FIXED, 2, 2),   # confirmed
     "Big Coin":           (_FIXED, 2, 2),   # confirmed
     "Checkpoint Flag":    (_FIXED, 2, 2),   # confirmed
     "Goomba's Shoe":      (_FIXED, 2, 2),   # confirmed (decoder: "Shoe Goomba")
     "Yoshi's Egg":        (_FIXED, 2, 2),   # id 45, SMW/NSMBU form of the above
-    "Saw":                (_FIXED, 3, 3),   # confirmed 3x3 (NOT 2x2)
+    "Saw":                (_FIXED, 3, 3),   # confirmed 3x3
     "Swinging Claw":      (_FIXED, 3, 4),   # confirmed
-    "Skewer":             (_FIXED, 4, 4),   # documented (level_dataset.py)
-    "Donut":              (_FIXED, 3, 3),   # id 82 Donut Block Platform, 3x3
-    "Boom Boom":          (_FIXED, 2, 2),   # assumed boss 2x2
-    "Banzai Bill":        (_FIXED, 2, 2),   # assumed 2x2
-    "Angry Sun":          (_FIXED, 2, 2),   # assumed 2x2
-    "Bowser Jr.":         (_FIXED, 2, 2),   # assumed boss 2x2
+    "Skewer":             (_FIXED, 4, 4),
+    "Donut":              (_FIXED, 3, 3),   # id 82 Donut Block Platform
+    "Boom Boom":          (_FIXED, 2, 2),   # assumed
+    "Banzai Bill":        (_FIXED, 2, 2),   # assumed
+    "Angry Sun":          (_FIXED, 2, 2),   # assumed
+    "Bowser Jr.":         (_FIXED, 2, 2),   # assumed
     "Bowser Jr":          (_FIXED, 2, 2),
-    "Clown Car":          (_FIXED, 2, 2),   # assumed 2x2
-    # door: 1 wide x 2 tall; grouping the two cells stops build_doors mispairing
-    # a single door's halves into a warp
-    "Door":               (_FIXED, 1, 2),
-    # Intentionally NOT coalesced: Wiggler (id 52) and Chain Chomp (id 61) are
-    # 1x1 in real data (Chain Chomp only occasionally 2x2) and are commonly
-    # placed in rows, so a fixed 2x2 guess wrongly merged adjacent ones.
-    # variable-size platforms / structures
-    "Mushroom Platform":  (_MUSHROOM,),    # cap (top row) + centred stem
-    "Semisolid Platform": (_BBOX,),
+    "Clown Car":          (_FIXED, 2, 2),   # assumed
+    "Door":               (_FIXED, 1, 2),   # pairing the halves stops mispairing
+    # Wiggler/Chain Chomp deliberately absent: 1x1 in real data and often in rows.
+    "Mushroom Platform":  (_MUSHROOM,),
+    "Semisolid Platform": (_BBOX,),   # box repair, see repair_semisolid_cells
     "Half-Collision Platform": (_BBOX,),
     "One-Way Wall":       (_BBOX,),
     "One-Way":            (_BBOX,),
-    "Bridge":             (_HRUN,),        # one walkable row, any width
+    "Bridge":             (_HRUN,),
     "Lift":               (_HRUN,),
-    "Bullet Bill Blaster":(_VRUN,),        # 1 wide, stacked any height
+    "Bullet Bill Blaster":(_VRUN,),
     "Vine":               (_VRUN,),
-    "Pipe":               (_PIPE,),        # 2 wide, directional
+    "Pipe":               (_PIPE,),
 }
 
 
@@ -545,12 +501,50 @@ def _runs(values):
     yield start, prev - start + 1
 
 
-def coalesce(name, cells, out):
-    """Append reconstructed object(s) for every cell tagged `name` to `out`.
+# ---------------------------------------------------------------------------
+# Semisolid platform repair (ASCII -> JSON)
+#
+# A semisolid is a solid box you stand on and pass through from below. The model
+# sprays its 'k' glyph as lone tiles and ragged blobs, so plain _BBOX leaves a
+# swarm of slivers. repair_semisolid_cells() rebuilds one box per 4-connected
+# blob: take its columns and top (cap) row, widen to the 3-tile minimum, then
+# drag the bottom down to rest on ground.
+# ---------------------------------------------------------------------------
+PLATFORM_MIN_SIZE = 3       # SMM2 won't place a semisolid smaller than 3x3
 
-    `cells` is the set of (col, row) cells carrying this object's glyph; the
-    policy in COALESCE_POLICY decides how connected blocks become objects.
-    Objects with no policy stay 1x1 (one per cell)."""
+
+def repair_semisolid_cells(cells, ground=None):
+    """Turn semisolid 'k' cells into (col, row, w, h) boxes, one per 4-connected
+    blob, widened to the 3-tile minimum and dragged down to `ground` (set of
+    solid cells; falsy = drag to the floor)."""
+    ground = ground or set()
+    boxes = []
+    for comp in _connected_components(cells):
+        cols = [c for c, _ in comp]
+        rows = [r for _, r in comp]
+        c0, c1 = min(cols), max(cols)
+        cap_row = max(rows)                        # top / walkable surface
+        w = c1 - c0 + 1
+        if w < PLATFORM_MIN_SIZE:                  # widen symmetrically
+            c0 = max(0, c0 - (PLATFORM_MIN_SIZE - w) // 2)
+            w = PLATFORM_MIN_SIZE
+        c1 = c0 + w - 1
+        # Drag the bottom down until every column directly beneath the base rests
+        # on ground (or we hit the floor) -- the same rest-on-ground rule
+        # json_to_bcd._fix_platform_objects uses.
+        bottom = min(rows)
+        while bottom > 0 and any((c, bottom - 1) not in ground
+                                 for c in range(c0, c1 + 1)):
+            bottom -= 1
+        if cap_row - bottom + 1 < PLATFORM_MIN_SIZE:   # 3-tall minimum
+            bottom = max(0, cap_row - (PLATFORM_MIN_SIZE - 1))
+        boxes.append((c0, bottom, w, cap_row - bottom + 1))
+    return boxes
+
+
+def coalesce(name, cells, out, ground=None):
+    """Turn `cells` (the glyph cells for `name`) into objects per COALESCE_POLICY,
+    appending to `out`. `ground` drags semisolids to the floor. No policy = 1x1."""
     policy = COALESCE_POLICY.get(name)
     if policy is None:
         for col, row in cells:
@@ -558,6 +552,10 @@ def coalesce(name, cells, out):
         return
 
     kind = policy[0]
+    if name == "Semisolid Platform":
+        for col, row, w, h in repair_semisolid_cells(cells, ground):
+            out.append(make_object(name, col, row, w, h))
+        return
     for comp in _connected_components(cells):
         cols = [c for c, _ in comp]
         rows = [r for _, r in comp]
@@ -577,13 +575,9 @@ def coalesce(name, cells, out):
         elif kind == _BBOX:
             out.append(make_object(name, c0, r0, c1 - c0 + 1, r1 - r0 + 1))
         elif kind == _MUSHROOM:
-            # A mushroom is a wide cap (top row) over a 1-wide centred stem. Two
-            # stacked mushrooms form one blob with two caps joined by a stem. A
-            # cap is a wide row (>=2 cells) whose row ABOVE is narrow/empty -- the
-            # actual top of a mushroom; a wide row sitting under another wide row
-            # is absorbed into the mushroom above (so overdrawn / overlapping
-            # caps don't split into 1-tall slivers). Each cap's platform hangs
-            # down to just above the next cap below it (or the blob's bottom).
+            # A mushroom is a wide cap over a 1-wide stem; stacked mushrooms share
+            # a blob. A cap is a row of >=2 cells with a narrow/empty row above;
+            # each cap hangs down to just above the next cap (or the blob bottom).
             rows_by = {}
             for c, r in comp:
                 rows_by.setdefault(r, []).append(c)
@@ -624,6 +618,39 @@ def coalesce(name, cells, out):
                     out.append(make_object(name, col, row))
 
 
+# ---------------------------------------------------------------------------
+# End-of-level goal synthesis (ASCII -> JSON)
+#
+# With --strip_goal training data the model produces levels with no 'G'. This
+# tacks a reachable finish onto the right edge: a flat ground runway flush with
+# the level's floor, with a goal standing on its first tile.
+# ---------------------------------------------------------------------------
+GOAL_RUNWAY_TILES = 10      # width of the synthesized end platform, in tiles
+GOAL_WIDTH_TILES = 3        # the goal's own footprint, in tiles
+
+
+def _append_end_goal(ground, width):
+    """Append a ground runway past the right edge and return
+    (goal_col, goal_row, added_cols) for a goal standing on its first tile."""
+    ground_at = {(g["x"], g["y"]) for g in ground}
+    # Floor height = the ground stack at the right-most column that has a floor;
+    # the runway is laid flush with it. Default to SMM2's usual floor of 2.
+    floor = 0
+    for col in range(width - 1, -1, -1):
+        if (col, 0) in ground_at:
+            while (col, floor) in ground_at:
+                floor += 1
+            break
+    if floor == 0:
+        floor = 2
+    runway_left = width                     # append just past the current content
+    runway = max(GOAL_RUNWAY_TILES, GOAL_WIDTH_TILES)   # must hold the goal
+    for col in range(runway_left, runway_left + runway):
+        for row in range(floor):
+            ground.append({"x": col, "y": row, "id": 0, "bid": 0})
+    return runway_left, floor, runway
+
+
 def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
                    timer=300):
     rows, width = parse_ascii(text)
@@ -641,9 +668,7 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
             if ch == " ":
                 continue
             if ch == GROUND_CHAR:
-                # SMM2 ground autotile id/bid aren't recoverable from ASCII;
-                # toost re-derives the tile graphic from tile occupancy, so 0/0
-                # loads and renders as solid ground.
+                # Autotile id/bid aren't recoverable; toost re-derives them.
                 ground.append({"x": col, "y": row_game, "id": 0, "bid": 0})
                 continue
             name = CHAR_TO_NAME.get(ch)
@@ -651,26 +676,14 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
                 unknown_glyphs[ch] = unknown_glyphs.get(ch, 0) + 1
                 continue
             if name == "Goal":
-                # The goal/flagpole is LEVEL METADATA in this schema, not an
-                # objects[] entry: it lives in the header's goal_x/goal_y and is
-                # consumed from there by mm2pipeline.swe (build_metadata -> S1)
-                # and json_to_bcd (pack_level_header). The forward path paints it
-                # as a vertical column of 'G' glyphs -- normalize_level injects an
-                # h=11 pole anchored at goal_x/goal_y. So collect those cells and
-                # recover the pole's base below, instead of emitting id=27
-                # objects: mm2pipeline.swe drops id=27 outright
-                # (OBJ_ID_MAP[27] = None), which is exactly the "the end doesn't
-                # make it into the .swe" symptom.
+                # The goal is header metadata (goal_x/goal_y), not an objects[]
+                # entry, so collect its cells and recover the pole base below.
                 goal_cells.append((col, row_game))
                 continue
             obj_cells.setdefault(name, set()).add((col, row_game))
 
-    # Fold an item glyph sitting directly ABOVE a Brick / ? / Hidden block back
-    # into that block's `cid` (the inverse of the forward painter's item-above-
-    # block stamping), rather than emitting a free-floating item object. The
-    # block then round-trips as a container: json_to_bcd packs `cid` into the
-    # .bcd and mm2pipeline.swe maps it to the block's sprout. For human-authored
-    # ASCII this also makes "item resting on a block" mean "item inside it".
+    # Fold an item glyph directly above a Brick/?/Hidden block into that block's
+    # `cid` (inverse of the forward painter), so it round-trips as a container.
     block_cells = set()
     for bname in CONTAINER_BLOCK_NAMES:
         block_cells |= obj_cells.get(bname, set())
@@ -688,14 +701,11 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
                 remaining.add(cell)
         obj_cells[iname] = remaining
 
-    # Coalesce same-glyph cells back into correctly-sized multi-tile objects
-    # (a 2x2 Thwomp -> one object, not four; an N-wide Mushroom Platform -> one
-    # platform, not N tiny whole mushrooms; a 2-wide pipe -> one pipe). Objects
-    # with no policy fall through to one 1x1 object per cell. See coalesce().
+    # Coalesce same-glyph cells into correctly-sized objects (see coalesce()).
+    ground_cells = {(g["x"], g["y"]) for g in ground}
     for name, cells in obj_cells.items():
         if name in CONTAINER_BLOCK_NAMES:
-            # Container blocks have no multi-tile policy (one object per cell);
-            # emit them here so the recovered contained-item cid can be attached.
+            # Emitted here (one per cell) so the recovered cid can be attached.
             for col, row in cells:
                 obj = make_object(name, col, row)
                 cid = block_item.get((col, row))
@@ -703,30 +713,20 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
                     obj["cid"] = cid
                 objects.append(obj)
             continue
-        coalesce(name, cells, objects)
+        coalesce(name, cells, objects, ground_cells)
 
-    # Recover goal_x/goal_y from the painted flagpole. goal_x is stored in
-    # TENTHS of a tile (both build_metadata in mm2pipeline.swe and
-    # normalize_level compute goal_col = goal_x // 10); goal_y is the pole's base
-    # row in whole tiles from the bottom. Goal is left-anchored and its height
-    # grows upward, so the anchor is the left-most, bottom-most cell -- take the
-    # min column / min row. With no 'G' glyphs the level has no goal and both
-    # stay 0.
+    # Recover goal_x/goal_y from the flagpole cells (goal_x in tenths of a tile,
+    # goal_y the base row). The goal is left-anchored and grows up, so take the
+    # min column/row. With no 'G' glyphs, synthesize a goal on a new runway.
     if goal_cells:
         goal_col = min(c for c, _ in goal_cells)
         goal_row = min(r for _, r in goal_cells)
     else:
-        goal_col = 0
-        goal_row = 0
+        goal_col, goal_row, added = _append_end_goal(ground, width)
+        width += added
 
-    # Recover the player spawn height. The player always starts at the left edge,
-    # standing on top of the left-edge ground column (the start platform the
-    # forward painter injects for overworld maps, cols 0-6). Measure the height
-    # of the contiguous ground stack at the left-most column that has ground.
-    # Without this start_y stays 0, which mm2pipeline.swe maps to one tile BELOW
-    # the bottom ground row -- the player spawns in the void and falls out (every
-    # level's spawn "messed up"). Default to 2 (the common SMM2 spawn) if the
-    # left edge has no ground.
+    # Recover the spawn height from the ground stack at the left edge (start_y=0
+    # would spawn the player in the void). Default to SMM2's usual 2.
     ground_at = {(g["x"], g["y"]) for g in ground}
     start_y = 0
     for c in (0, 1, 2):
@@ -748,9 +748,7 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
         "gamestyle_raw": gamestyle_raw,
         "theme": THEME_NAME.get(theme_raw, "Ground"),
         "theme_raw": theme_raw,
-        # is_overworld=False suppresses the synthetic start/goal ground that
-        # normalize_level() injects for overworld maps -- the generated level
-        # carries no real goal/start metadata, so injecting one would corrupt it.
+        # False suppresses normalize_level()'s synthetic start/goal ground.
         "is_overworld": False,
         "night_time": False,
         "clear_time": 0,
@@ -781,8 +779,7 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
         "liquid_mode_raw": 0,
         "liquid_speed_raw": 0,
         "boundary_type_raw": 0,
-        # Boundaries are in pixels (16 px / tile), per toost (mm2_viewer_json's
-        # _grid_bounds: max_tx = right_boundary // 16).
+        # Boundaries are in pixels (16 px / tile), per toost.
         "right_boundary": width * GROUND_TILE_PX,
         "top_boundary": height * GROUND_TILE_PX,
         "left_boundary": 0,
@@ -811,9 +808,8 @@ def ascii_to_json_file(infile, outdir, **kwargs):
     # utf-8-sig transparently strips a leading BOM if one is present.
     text = Path(infile).read_text(encoding="utf-8-sig")
     level = ascii_to_level(text, source_file=infile, **kwargs)
-    # toost / json_to_bcd discover the subworld companion by an _overworld /
-    # _subworld suffix; tag generated levels as overworld so the pipeline picks
-    # them up (json_to_bcd.find_companion).
+    # The pipeline finds companions by the _overworld/_subworld suffix, so tag
+    # generated levels as overworld.
     stem = Path(infile).stem
     if not (stem.endswith("_overworld") or stem.endswith("_subworld")):
         stem += "_overworld"
@@ -825,7 +821,7 @@ def ascii_to_json_file(infile, outdir, **kwargs):
               f"{level['_unknown_glyphs']}")
 
 
-def main_ascii_to_json():
+def main_ascii_to_json(argv=None):
     ap = argparse.ArgumentParser(description="Convert ASCII Mario Maker grids back to MM2 JSON.")
     ap.add_argument("input", help="folder of .txt files, or a single .txt file")
     ap.add_argument("output_folder")
@@ -834,7 +830,7 @@ def main_ascii_to_json():
     ap.add_argument("--theme", choices=sorted(THEME_RAW), default="overworld",
                     help="course theme (default: overworld)")
     ap.add_argument("--timer", type=int, default=300, help="level timer (default: 300)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     outdir = Path(args.output_folder)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -858,10 +854,18 @@ def main_ascii_to_json():
             print(f"Failed {tf.name}: {e}")
 
 
-# Running the module directly defaults to the forward (json -> ascii) direction,
-# matching the historical `python mm2_json_to_ascii.py` entrypoint.
-def main():
-    main_json_to_ascii()
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv or argv[0] not in ("to-ascii", "to-json"):
+        print("Usage: python -m mm2pipeline.ascii {to-ascii|to-json} [options]")
+        print("  to-ascii   level JSON folder -> ASCII grids (+ metadata.json)")
+        print("  to-json    ASCII grids -> level JSON")
+        sys.exit(2)
+    if argv[0] == "to-ascii":
+        main_json_to_ascii(argv[1:])
+    else:
+        main_ascii_to_json(argv[1:])
 
 
 if __name__ == "__main__":

@@ -50,7 +50,7 @@ if exist "%GEN_DIR%" rd /s /q "%GEN_DIR%"
 
 echo.
 echo === [1/4] train/validate/test split + tokenizer (dataset assumed captioned) ===
-%PY% split_mario_maker_data.py --json "%DATASET%" --seed %SEED%
+%PY% -m mm2pipeline.dataset split --json "%DATASET%" --seed %SEED%
 if errorlevel 1 goto error
 %PY% tokenizer.py save --json_file "%BASE%-train.json" --pkl_file "%TOKENIZER%"
 if errorlevel 1 goto error

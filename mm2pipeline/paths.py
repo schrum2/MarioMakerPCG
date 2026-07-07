@@ -1,10 +1,7 @@
 """Path resolution for the mm2pipeline package.
 
-All the data files the pipeline depends on (tilesets, the ascii->extended
-converter, ...) live at the repository root, NOT inside this package. Code used
-to find them relative to each script's own directory; now that the logic lives in
-a package one level down, resolve everything from the repo root instead so moving
-a module never breaks a lookup.
+The data files (tilesets, converters, ...) live at the repo root, not in the
+package, so everything resolves from there via repo_path().
 """
 from pathlib import Path
 

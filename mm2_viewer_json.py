@@ -204,7 +204,7 @@ GROUND_CHAR  = "#"
 UNKNOWN_CHAR = "▒"
 
 # ASCII export replacements: MM2 objects that convert to a different SWE object.
-# Mirrors the approximations in json_to_swe.py OBJ_ID_MAP.
+# Mirrors the approximations in mm2pipeline.swe OBJ_ID_MAP.
 ASCII_REPLACEMENTS = {
     "Spike Top":           "s",  # → Spiny
     "Fish Bone":           "~",  # → Cheep Cheep
@@ -274,7 +274,7 @@ def get_meta(name: str):
 
 
 # ---------------------------------------------------------------------------
-# Items stored INSIDE a block (mirrors mm2_json_to_ascii.py): the block keeps
+# Items stored INSIDE a block (mirrors mm2pipeline.ascii): the block keeps
 # the contained item's MM2 object id in its `cid`, with no separate objects[]
 # entry. CONTAINER_BLOCK_IDS gates the carriers; CID_ITEM_NAME maps the child id
 # back to an OBJ_META name so it can be drawn one tile above the block.
@@ -1206,7 +1206,7 @@ class MM2Viewer(tk.Tk):
                     # Slopes have no flat-ASCII diagonal equivalent, so fill
                     # their footprint as a solid ascending/descending
                     # staircase of ground -- mirrors slope_fill_cells() in
-                    # json_to_swe.py and the same fix in mm2_json_to_ascii.py.
+                    # mm2pipeline.swe and the same fix in mm2pipeline.ascii.
                     step = 2 if obj.get("id") == 87 else 1
                     descending = (obj.get("flag", 0) & 0x100000) != 0
                     for x in range(w):
