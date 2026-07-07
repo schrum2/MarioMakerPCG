@@ -11,8 +11,7 @@ from level_dataset import visualize_samples, convert_to_level_format, positive_n
 from render_mm2 import mm2_tiles
 from MarioMaker_create_ascii_captions import get_char_names, CAPTION_METADATA_FIELDS
 from util.sampler import SampleOutput
-from captions.caption_match import compare_captions
-from create_ascii_captions import assign_caption
+from captions.MM2_caption_match import caption_tools as mm2_caption_tools
 from captions.util import extract_tileset
 import util.common_settings as common_settings
 from util.sampler import scene_to_ascii
@@ -423,6 +422,10 @@ class CaptionBuilder(ParentBuilder):
             filepath = filedialog.askopenfilename(title="Select JSON File", filetypes=[("JSON", "*.json")])
         if filepath:
             _, self.id_to_char, self.char_to_id, self.tile_descriptors = extract_tileset(tileset_path)
+            # Caption generated scenes the same way the dataset was captioned
+            # (MarioMaker_create_ascii_captions), not with the SMB assign_caption
+            # from MarioDiffusion, so the comparison lines up with the loaded data.
+            self.mm_assign_caption, self.mm_compare_captions = mm2_caption_tools(tileset_path)
             # print(f"Tileset in use: {tileset_path}")
             # print(f"Self ID to Char: {self.id_to_char}")
             # print(f"Self Char to ID: {self.char_to_id}")
@@ -599,12 +602,12 @@ class CaptionBuilder(ParentBuilder):
                 self.generated_scenes.append(scene)
                 #selected_game = self.game_var.get()
                 #elif game_selected == "Mario":
-                actual_caption = assign_caption(scene, self.id_to_char, self.char_to_id, self.tile_descriptors, False, False)
+                actual_caption = self.mm_assign_caption(scene)
                 pil_img = visualize_samples(images, game="MM2")
-                
+
                 self.generated_images.append(pil_img)
                 img_tk = ImageTk.PhotoImage(pil_img)
-                compare_score, exact_matches, partial_matches, excess_phrases = compare_captions(prompt, actual_caption, return_matches=True, debug=self.debug_caption.get())
+                compare_score, exact_matches, partial_matches, excess_phrases = self.mm_compare_captions(prompt, actual_caption, return_matches=True, debug=self.debug_caption.get())
 
             except Exception as e:
                 messagebox.showerror(
@@ -925,8 +928,8 @@ Average Segment Score: {avg_segment_score}"""
         scene = self.generated_scenes[idx]
         prompt = self._get_current_prompt()
 
-        actual_caption = assign_caption(scene, self.id_to_char, self.char_to_id, self.tile_descriptors, False, False)
-        compare_score, exact_matches, partial_matches, excess_phrases = compare_captions(prompt, actual_caption, return_matches=True, debug=self.debug_caption.get())
+        actual_caption = self.mm_assign_caption(scene)
+        compare_score, exact_matches, partial_matches, excess_phrases = self.mm_compare_captions(prompt, actual_caption, return_matches=True, debug=self.debug_caption.get())
 
         avg_segment_score = None
 
