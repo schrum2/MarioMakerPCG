@@ -88,15 +88,15 @@ if "%NAME%"=="" (
 )
 
 echo === Step 1: Extracting up to %COUNT% level^(s^) ===
-python -m mm2pipeline.extract %FILTER_ARGS% --output_dir "%BCD_DIR%" --skip_3dworld --skip_items --skip_subworld_items%EXTRA%
+python -m mm2pipeline.extract %FILTER_ARGS% --output_folder "%BCD_DIR%" --skip_3dworld --skip_items --skip_subworld_items%EXTRA%
 if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline.extract failed. & exit /b 1 )
 
 echo === Step 2: Converting .bcd files to .json and images ===
-python -m mm2pipeline.toost "%BCD_DIR%" -o "%JSON_DIR%" --images-output "%IMAGES_DIR%"
+python -m mm2pipeline.toost --input "%BCD_DIR%" -o "%JSON_DIR%" --images-output "%IMAGES_DIR%"
 if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline.toost failed. & exit /b 1 )
 
 echo === Step 3: Converting .json files to ASCII ===
-python -m mm2pipeline.ascii to-ascii "%JSON_DIR%" "%ASCII_DIR%" --metadata_output "%METADATA%"
+python -m mm2pipeline.ascii to-ascii --input "%JSON_DIR%" --output_folder "%ASCII_DIR%" --metadata_output "%METADATA%"
 if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline.ascii failed. & exit /b 1 )
 
 REM Record the name filter and the level count (one .txt per level) so
@@ -122,4 +122,4 @@ echo   ASCII:    %ASCII_DIR%
 echo   Metadata: %METADATA%
 echo.
 echo Build the dataset with the metadata folded in, e.g.:
-echo   python -m mm2pipeline.dataset build --input_file "%ASCII_DIR%" --output dataset.json --tileset mm2_tileset_we.json --metadata "%METADATA%"
+echo   python -m mm2pipeline.dataset build --input "%ASCII_DIR%" --output_folder dataset.json --tileset mm2_tileset_we.json --metadata "%METADATA%"

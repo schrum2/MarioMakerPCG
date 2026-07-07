@@ -2,8 +2,8 @@
 diffusion model trains on.
 
 Usage:
-    python -m mm2pipeline.ascii to-ascii <json_folder> <ascii_folder>
-    python -m mm2pipeline.ascii to-json  <txt file or folder> <json_folder>
+    python -m mm2pipeline.ascii to-ascii --input <json_folder> --output_folder <ascii_folder>
+    python -m mm2pipeline.ascii to-json  --input <txt file or folder> --output_folder <json_folder>
 
 Object metadata comes from mm2pipeline.tiles. Both directions are lossy: the
 forward path folds off-tileset glyphs (ASCII_REPLACEMENTS / ASCII_DROP), the
@@ -332,8 +332,8 @@ def json_to_ascii_file(infile, outdir, metadata=None):
 
 def main_json_to_ascii(argv=None):
     ap = argparse.ArgumentParser(description="Convert MM2 level JSON to ASCII grids.")
-    ap.add_argument("input_folder")
-    ap.add_argument("output_folder")
+    ap.add_argument("--input", required=True)
+    ap.add_argument("--output_folder", required=True)
     ap.add_argument("--metadata_output", default=None,
                     help="Where to write the per-level metadata JSON (level_name, "
                          "difficulty, gamestyle, theme, tags), keyed by ascii file "
@@ -345,7 +345,7 @@ def main_json_to_ascii(argv=None):
     outdir.mkdir(parents=True, exist_ok=True)
 
     metadata = {}
-    for jf in sorted(Path(args.input_folder).glob("*.json")):
+    for jf in sorted(Path(args.input).glob("*.json")):
         try:
             json_to_ascii_file(jf, outdir, metadata)
             print(f"Converted {jf.name}")
@@ -823,8 +823,8 @@ def ascii_to_json_file(infile, outdir, **kwargs):
 
 def main_ascii_to_json(argv=None):
     ap = argparse.ArgumentParser(description="Convert ASCII Mario Maker grids back to MM2 JSON.")
-    ap.add_argument("input", help="folder of .txt files, or a single .txt file")
-    ap.add_argument("output_folder")
+    ap.add_argument("--input", required=True, help="folder of .txt files, or a single .txt file")
+    ap.add_argument("--output_folder", required=True)
     ap.add_argument("--gamestyle", choices=sorted(GAMESTYLE_RAW), default="smw",
                     help="game style for the rebuilt level (default: smw)")
     ap.add_argument("--theme", choices=sorted(THEME_RAW), default="overworld",

@@ -171,8 +171,8 @@ def main(argv=None):
     os.system("color")
 
     parser = argparse.ArgumentParser(description="Batch convert SMM2 .bcd level files to JSON and PNG images.")
-    parser.add_argument("folder",               help="Folder containing .bcd files")
-    parser.add_argument("-o", "--output",       help="JSON output folder (default: <folder>/json/)")
+    parser.add_argument("--input",              required=True, help="Folder containing .bcd files")
+    parser.add_argument("-o", "--output_folder", help="JSON output folder (default: <input>/json/)")
     parser.add_argument("--images-output",      help="PNG output folder (default: <folder>/images/)")
     parser.add_argument("--min-objects",        type=int, default=1,
                         help="Minimum object+ground count to keep a subworld (default: 1)")
@@ -189,9 +189,9 @@ def main(argv=None):
         sys.exit(1)
     print_success(f"Using exe: {exe}")
 
-    output_dir = args.output or os.path.join(args.folder, "json")
-    images_dir = args.images_output or os.path.join(args.folder, "images")
-    batch_convert(exe, args.folder, output_dir, images_dir,
+    output_dir = args.output_folder or os.path.join(args.input, "json")
+    images_dir = args.images_output or os.path.join(args.input, "images")
+    batch_convert(exe, args.input, output_dir, images_dir,
                   min_objects=args.min_objects,
                   remove_grid=args.remove_grid,
                   objects_over_pipes=args.objects_over_pipes)

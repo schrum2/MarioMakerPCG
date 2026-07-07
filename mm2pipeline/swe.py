@@ -18,8 +18,8 @@ recomputed from neighbour occupancy, slopes become solid ground. Constants
 marked "verified" come from saves placed by hand in the SMMWE editor.
 
 Usage:
-    python -m mm2pipeline.swe bcd_levels/json/<id>_overworld.json
-    python -m mm2pipeline.swe <file or folder> -o <out> --user <smmwe name>
+    python -m mm2pipeline.swe --input bcd_levels/json/<id>_overworld.json
+    python -m mm2pipeline.swe --input <file or folder> -o <out> --user <smmwe name>
 
 A matching *_subworld.json next to the overworld file becomes SB1.
 """
@@ -1031,8 +1031,8 @@ def parse_args(argv=None):
         description="Convert an MM2 level JSON (or a folder of JSONs) into "
                     "Super Mario Maker Worldwide Engine (.swe) save file(s)."
     )
-    p.add_argument("json_path", help="Path to a *_overworld.json, a plain level JSON, or a folder of JSONs")
-    p.add_argument("-o", "--output", help="Output .swe path (single-file) or output folder (folder mode)")
+    p.add_argument("--input", required=True, help="Path to a *_overworld.json, a plain level JSON, or a folder of JSONs")
+    p.add_argument("-o", "--output_folder", help="Output .swe path (single-file) or output folder (folder mode)")
     p.add_argument("--user", default=None,
                    help="Author name stored in the level (default: the SMMWE "
                         "logged-in username, else 'patwick')")
@@ -1069,8 +1069,8 @@ def convert_one(ow_path, sub_path, base, args, out_dir=None):
 
     if out_dir is not None:
         out_path = Path(out_dir) / (base + ".swe")
-    elif args.output:
-        out_path = Path(args.output)
+    elif args.output_folder:
+        out_path = Path(args.output_folder)
     else:
         out_path = ow_path.with_name(base + ".swe")
     out_path.write_bytes(data)
@@ -1097,10 +1097,10 @@ def main(argv=None):
         args.user = detect_smmwe_user()
         print(f"Author: {args.user}")
 
-    in_path = Path(args.json_path)
+    in_path = Path(args.input)
 
     if in_path.is_dir():
-        out_dir = Path(args.output) if args.output else in_path
+        out_dir = Path(args.output_folder) if args.output_folder else in_path
         out_dir.mkdir(parents=True, exist_ok=True)
         seen_bases = set()
         errors = 0

@@ -91,11 +91,11 @@ if exist "%INPUT%\" (
 )
 set "META_ARG="
 if defined METADATA if exist "%METADATA%" set "META_ARG=--metadata "%METADATA%""
-python -m mm2pipeline.dataset build --input_file "%INPUT%" --output %RAW_OUTPUT% --tileset %TILESET% --sliding_window --stride 20 %META_ARG%
+python -m mm2pipeline.dataset build --input "%INPUT%" --output_folder %RAW_OUTPUT% --tileset %TILESET% --sliding_window --stride 20 %META_ARG%
 if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline.dataset build failed. & exit /b 1 )
 python MarioMaker_llm_captions.py --dataset %RAW_OUTPUT% --tileset %TILESET% --output %CAPTIONED_OUTPUT% --model %MODEL% --ascii-output-dir "%LLM_ASCII_DIR%" --num-captions 1 --prompt-log MM2_Prompt.txt
 if %ERRORLEVEL% neq 0 ( echo ERROR: MarioMaker_llm_captions.py failed. & exit /b 1 )
-python -m mm2pipeline.dataset split --json %CAPTIONED_OUTPUT% --seed %SEED%
+python -m mm2pipeline.dataset split --input %CAPTIONED_OUTPUT% --seed %SEED%
 if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline.dataset split failed. & exit /b 1 )
 python tokenizer.py save --json_file datasets\%GAME%_LevelsAndCaptions-%TYPE%-train.json --pkl_file datasets\%GAME%_Tokenizer-%TYPE%.pkl
 if %ERRORLEVEL% neq 0 ( echo ERROR: tokenizer.py failed. & exit /b 1 )

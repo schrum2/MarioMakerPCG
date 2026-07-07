@@ -4,7 +4,7 @@ TheGreatRambler/mm2_level HuggingFace dataset for use with Toost.
 Usage
 -----
     # Stream a small sample (recommended for testing):
-    python -m mm2pipeline.extract --output_dir ./bcd_levels --limit 100
+    python -m mm2pipeline.extract --output_folder ./bcd_levels --limit 100
 
     # Extract specific data_ids:
     python -m mm2pipeline.extract --ids 3000004 3000007
@@ -14,7 +14,7 @@ Usage
     python -m mm2pipeline.extract --likes 1000 --dislikes 300 --exclude-tag Art
 
     # Extract everything (streaming, ~100 GB):
-    python -m mm2pipeline.extract --output_dir ./bcd_levels
+    python -m mm2pipeline.extract --output_folder ./bcd_levels
 
 Besides the .bcd files, a `level_metadata.json` index (stem -> difficulty/tags)
 is written to the output folder; mm2pipeline.toost folds it into the exported
@@ -297,7 +297,7 @@ def parse_args(argv=None):
             "TheGreatRambler/mm2_level HuggingFace dataset for use with Toost."
         )
     )
-    p.add_argument("--output_dir", "-o", default="./bcd_levels")
+    p.add_argument("--output_folder", "-o", default="./bcd_levels")
     p.add_argument("--limit", "-n", type=int, default=None,
                    help="Max levels to extract (default: all)")
     p.add_argument("--no_stream", action="store_true",
@@ -351,7 +351,7 @@ def main(argv=None):
         raise SystemExit(f"--tag and --exclude-tag can't share a tag: {clash}")
 
     extract_levels(
-        output_dir=args.output_dir,
+        output_dir=args.output_folder,
         limit=args.limit,
         streaming=not args.no_stream,
         data_id_filter=set(args.ids) if args.ids else None,

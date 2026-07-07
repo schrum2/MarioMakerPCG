@@ -2,8 +2,8 @@
 train/validate/test.
 
 Two subcommands when run as a module:
-    python -m mm2pipeline.dataset build  --input_file ... --output ... --tileset ...
-    python -m mm2pipeline.dataset split  --json ...
+    python -m mm2pipeline.dataset build  --input ... --output_folder ... --tileset ...
+    python -m mm2pipeline.dataset split  --input ...
 
 ``build`` parses each .txt file into per-level row lists (split on "(source_num)"
 headers), crops each level to a WINDOW_H x WINDOW_W window (best window, or every
@@ -430,8 +430,8 @@ def main_build(argv=None):
     global WINDOW_H, WINDOW_W
 
     parser = argparse.ArgumentParser(description="Build dataset from custom tagged text files.")
-    parser.add_argument("--input_file", required=True, help="Path to a .txt file or a folder of .txt files.")
-    parser.add_argument("--output", required=True, help="Output JSON filename.")
+    parser.add_argument("--input", required=True, help="Path to a .txt file or a folder of .txt files.")
+    parser.add_argument("--output_folder", required=True, help="Output JSON filename.")
     parser.add_argument("--tileset", required=True, help="Path to tileset JSON.")
     convert_group = parser.add_mutually_exclusive_group()
     convert_group.add_argument("--convert_to_vglc", action="store_true",
@@ -541,7 +541,7 @@ def main_build(argv=None):
         if args.image_output_dir:
             image_out_dir = Path(args.image_output_dir)
         else:
-            out = Path(args.output)
+            out = Path(args.output_folder)
             image_out_dir = out.parent / f"{out.stem}_images"
         image_out_dir.mkdir(parents=True, exist_ok=True)
         # Crops for the dropped dataset go in a parallel sibling folder so they
@@ -550,8 +550,8 @@ def main_build(argv=None):
             dropped_image_out_dir = image_out_dir.parent / f"{image_out_dir.name}_dropped"
             dropped_image_out_dir.mkdir(parents=True, exist_ok=True)
 
-    input_files = collect_input_files(args.input_file)
-    level_metadata = load_level_metadata(args.metadata, args.input_file)
+    input_files = collect_input_files(args.input)
+    level_metadata = load_level_metadata(args.metadata, args.input)
     dataset = []
     dataset_dropped = []     # samples rejected by --min_tiles, kept for inspection
     processed = 0
@@ -684,7 +684,7 @@ def main_build(argv=None):
                 skipped += 1
 
     # Save output dataset
-    output_file = Path(args.output)
+    output_file = Path(args.output_folder)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(dataset, f, indent=2)
@@ -722,7 +722,7 @@ def main_build(argv=None):
 
 def main_split(argv=None):
     parser = argparse.ArgumentParser(description="Split a Mario Maker dataset into train/val/test sets.")
-    parser.add_argument("--json", type=str, required=True, help="Path to dataset JSON file")
+    parser.add_argument("--input", type=str, required=True, help="Path to dataset JSON file")
     parser.add_argument("--train_pct", type=float, default=0.8)
     parser.add_argument("--val_pct", type=float, default=0.1)
     parser.add_argument("--test_pct", type=float, default=0.1)
@@ -732,7 +732,7 @@ def main_split(argv=None):
     if abs(args.train_pct + args.val_pct + args.test_pct - 1.0) > 1e-6:
         raise ValueError("Train/val/test percentages must sum to 1.0")
 
-    with open(args.json, "r", encoding="utf-8") as f:
+    with open(args.input, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     random.seed(args.seed)
@@ -755,7 +755,7 @@ def main_split(argv=None):
     val_data = data[n_train:n_train + n_val]
     test_data = data[n_train + n_val:]
 
-    base, ext = os.path.splitext(args.json)
+    base, ext = os.path.splitext(args.input)
     splits = {
         f"{base}-train{ext}": train_data,
         f"{base}-validate{ext}": val_data,

@@ -59,23 +59,23 @@ This is what `bat\extract_levels_to_ascii.bat` + the `prepare-mario-maker`
 ```bat
 REM 1. Pull levels from the HuggingFace dump (writes .bcd files plus a
 REM    level_metadata.json index of each level's server-side difficulty/tags).
-python -m mm2pipeline extract --output_dir out\bcd --limit 100 --skip_3dworld --skip_items --skip_subworld_items
+python -m mm2pipeline extract --output_folder out\bcd --limit 100 --skip_3dworld --skip_items --skip_subworld_items
 
 REM    Filters: --name / --name_count, --ids, --tag / --all-tags / --exclude-tag,
 REM    --difficulty, --likes N (minimum), --dislikes N (maximum).
-python -m mm2pipeline extract --output_dir out\bcd --tag Speedrun --difficulty Easy Normal --likes 1000 --limit 50
+python -m mm2pipeline extract --output_folder out\bcd --tag Speedrun --difficulty Easy Normal --likes 1000 --limit 50
 
 REM 2. Decode each .bcd to level JSON and a rendered PNG. The metadata index is
 REM    folded into the JSONs automatically.
-python -m mm2pipeline toost out\bcd -o out\json --images-output out\images
+python -m mm2pipeline toost --input out\bcd -o out\json --images-output out\images
 
 REM 3. Flatten the JSONs to ASCII grids. Also writes ascii\metadata.json
 REM    (per-level name/difficulty/gamestyle/theme/tags, keyed by file stem).
-python -m mm2pipeline json-to-ascii out\json out\ascii
+python -m mm2pipeline json-to-ascii --input out\json --output_folder out\ascii
 
 REM 4. Window the ASCII into fixed-size tile-id scenes. metadata.json is picked
 REM    up automatically from the input folder (or pass --metadata explicitly).
-python -m mm2pipeline dataset build --input_file out\ascii --output dataset.json --tileset mm2_tileset_we.json --sliding_window --stride 20
+python -m mm2pipeline dataset build --input out\ascii --output_folder dataset.json --tileset mm2_tileset_we.json --sliding_window --stride 20
 
 REM    Useful options: --strip_goal (train without flagpoles), --window_h/--window_w,
 REM    --min_tiles_pct (drop mostly-air windows; rejects go to *_dropped.json),
@@ -83,7 +83,7 @@ REM    --with_images (crop the matching PNG slice per sample),
 REM    --convert_to_extended / --convert_to_vglc (alternate tile vocabularies).
 
 REM 5. Split into train/validate/test (writes dataset-train.json etc.).
-python -m mm2pipeline dataset split --json dataset.json --seed 0
+python -m mm2pipeline dataset split --input dataset.json --seed 0
 ```
 
 ## Walkthrough: generated ASCII → playable level
@@ -93,11 +93,11 @@ REM 1. Rebuild level JSON from the model's ASCII output (a .txt file or folder).
 REM    Multi-tile objects are re-coalesced, scattered semisolid platforms are
 REM    repaired into clean boxes, and a level with no goal gets a reachable
 REM    end runway synthesized on its right edge.
-python -m mm2pipeline ascii-to-json samples\ out\gen_json --gamestyle smw --theme overworld
+python -m mm2pipeline ascii-to-json --input samples\ --output_folder out\gen_json --gamestyle smw --theme overworld
 
 REM 2. Convert to a .swe save for Super Mario Maker: World Engine. A matching
 REM    *_subworld.json next to the overworld file is included automatically.
-python -m mm2pipeline swe out\gen_json -o out\swe --user <your SMMWE username>
+python -m mm2pipeline swe --input out\gen_json -o out\swe --user <your SMMWE username>
 ```
 
 Drop the `.swe` into SMMWE's save folder (the `--user` name must match the
@@ -130,75 +130,75 @@ python -m mm2pipeline extract -o out\bcd --skip_3dworld --skip_items --skip_subw
 
 ```bat
 REM JSON + PNG next to the .bcd folder (default out\bcd\json and out\bcd\images).
-python -m mm2pipeline toost out\bcd
+python -m mm2pipeline toost --input out\bcd
 
 REM Explicit output folders.
-python -m mm2pipeline toost out\bcd -o out\json --images-output out\images
+python -m mm2pipeline toost --input out\bcd -o out\json --images-output out\images
 
 REM Render without the grid overlay, and keep even 1-object subworlds.
-python -m mm2pipeline toost out\bcd -o out\json --remove-grid --min-objects 0
+python -m mm2pipeline toost --input out\bcd -o out\json --remove-grid --min-objects 0
 ```
 
 ### json-to-ascii
 
 ```bat
 REM JSON folder -> ASCII grids, with metadata.json written into out\ascii.
-python -m mm2pipeline json-to-ascii out\json out\ascii
+python -m mm2pipeline json-to-ascii --input out\json --output_folder out\ascii
 
 REM Write the metadata sidecar somewhere else.
-python -m mm2pipeline json-to-ascii out\json out\ascii --metadata_output out\meta.json
+python -m mm2pipeline json-to-ascii --input out\json --output_folder out\ascii --metadata_output out\meta.json
 ```
 
 ### dataset build
 
 ```bat
 REM One best (busiest) 20x20 window per level.
-python -m mm2pipeline dataset build --input_file out\ascii --output dataset.json --tileset mm2_tileset_we.json
+python -m mm2pipeline dataset build --input out\ascii --output_folder dataset.json --tileset mm2_tileset_we.json
 
 REM Every 20-wide window across each level (no overlap).
-python -m mm2pipeline dataset build --input_file out\ascii --output dataset.json --tileset mm2_tileset_we.json --sliding_window --stride 20
+python -m mm2pipeline dataset build --input out\ascii --output_folder dataset.json --tileset mm2_tileset_we.json --sliding_window --stride 20
 
 REM Train without flagpoles, and crop the matching PNG slice per sample.
-python -m mm2pipeline dataset build --input_file out\ascii --output dataset.json --tileset mm2_tileset_we.json --sliding_window --strip_goal --with_images
+python -m mm2pipeline dataset build --input out\ascii --output_folder dataset.json --tileset mm2_tileset_we.json --sliding_window --strip_goal --with_images
 
 REM Extended tile vocabulary instead of the base one.
-python -m mm2pipeline dataset build --input_file out\ascii --output dataset.json --tileset extended_tiles.json --convert_to_extended --sliding_window --stride 20
+python -m mm2pipeline dataset build --input out\ascii --output_folder dataset.json --tileset extended_tiles.json --convert_to_extended --sliding_window --stride 20
 ```
 
 ### dataset split
 
 ```bat
 REM Default 80 / 10 / 10.
-python -m mm2pipeline dataset split --json dataset.json --seed 0
+python -m mm2pipeline dataset split --input dataset.json --seed 0
 
 REM Custom ratios.
-python -m mm2pipeline dataset split --json dataset.json --train_pct 0.7 --val_pct 0.15 --test_pct 0.15 --seed 42
+python -m mm2pipeline dataset split --input dataset.json --train_pct 0.7 --val_pct 0.15 --test_pct 0.15 --seed 42
 ```
 
 ### ascii-to-json
 
 ```bat
 REM A single generated level.
-python -m mm2pipeline ascii-to-json sample.txt out\gen_json
+python -m mm2pipeline ascii-to-json --input sample.txt --output_folder out\gen_json
 
 REM A whole folder, as SMW / overworld.
-python -m mm2pipeline ascii-to-json samples\ out\gen_json --gamestyle smw --theme overworld
+python -m mm2pipeline ascii-to-json --input samples\ --output_folder out\gen_json --gamestyle smw --theme overworld
 
 REM NSMBU castle, with a longer timer.
-python -m mm2pipeline ascii-to-json samples\ out\gen_json --gamestyle nsmbu --theme castle --timer 500
+python -m mm2pipeline ascii-to-json --input samples\ --output_folder out\gen_json --gamestyle nsmbu --theme castle --timer 500
 ```
 
 ### swe
 
 ```bat
 REM One level (subworld picked up automatically if it sits alongside).
-python -m mm2pipeline swe out\gen_json\3000048_overworld.json
+python -m mm2pipeline swe --input out\gen_json\3000048_overworld.json
 
 REM A whole folder to a .swe output folder.
-python -m mm2pipeline swe out\gen_json -o out\swe
+python -m mm2pipeline swe --input out\gen_json -o out\swe
 
 REM Set the author and displayed level name explicitly.
-python -m mm2pipeline swe level_overworld.json -o mylevel.swe --user Patrick --name "Test Level"
+python -m mm2pipeline swe --input level_overworld.json -o mylevel.swe --user Patrick --name "Test Level"
 ```
 
 ## A few conventions

@@ -50,7 +50,7 @@ if errorlevel 1 goto error
 
 echo.
 echo === [2/5] train/validate/test split + tokenizer ===
-%PY% -m mm2pipeline.dataset split --json "%CAPTIONED%" --seed %SEED%
+%PY% -m mm2pipeline.dataset split --input "%CAPTIONED%" --seed %SEED%
 if errorlevel 1 goto error
 %PY% tokenizer.py save --json_file "%BASE%-train.json" --pkl_file "%TOKENIZER%"
 if errorlevel 1 goto error

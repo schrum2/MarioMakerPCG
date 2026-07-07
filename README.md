@@ -17,10 +17,10 @@ See [mm2pipeline/README.md](mm2pipeline/README.md) for full instructions and
 walkthroughs. Common one-liners:
 
 **Build a dataset from ASCII level files:**
-python -m mm2pipeline dataset build --input_file <input.txt or folder> --output <dataset_name>.json --tileset extended_tiles.json --sliding_window --stride 20 --convert_to_extended
+python -m mm2pipeline dataset build --input <input.txt or folder> --output_folder <dataset_name>.json --tileset extended_tiles.json --sliding_window --stride 20 --convert_to_extended
 
 **Convert a level .json to SWE (playable in SMM: World Engine):**
-python -m mm2pipeline swe <json file or folder> -o <output .swe path or folder> --user <username>
+python -m mm2pipeline swe --input <json file or folder> -o <output .swe path or folder> --user <username>
 
 # Running Bat Files
 
