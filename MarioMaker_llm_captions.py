@@ -325,7 +325,7 @@ def build_system_section(num_captions):
 
 
 def build_image_clause():
-    """An instruction block, used only with --with-images, explaining the rendered
+    """An instruction block, used only with --images-dir, explaining the rendered
     screenshot that accompanies the text so the model knows to use it."""
     return (
         "\n\nYou will also receive a rendered image of this same level region — a "
@@ -343,7 +343,7 @@ def build_prompt_template(num_captions, image_clause=""):
 
     Returns a string with {dict_string}, {metadata}, {grid_label}, and
     {ascii_grid} placeholders left intact for the per-scene .format() call.
-    When image_clause is non-empty (--with-images), it is woven into the
+    When image_clause is non-empty (--images-dir), it is woven into the
     instructions so the model knows a screenshot accompanies the text.
     """
     plural = "caption" if num_captions == 1 else "captions"
@@ -574,7 +574,7 @@ def load_api_key(api_key_path):
         return f.readline().strip()
 
 
-# ── Image input (--with-images) ───────────────────────────────────────────────
+# ── Image input (--images-dir) ────────────────────────────────────────────────
 
 _IMAGE_MEDIA_TYPES = {
     ".png": "image/png",
@@ -585,7 +585,7 @@ _IMAGE_MEDIA_TYPES = {
 }
 
 # Substrings identifying models that accept image input, used to guard
-# --with-images so an image isn't silently dropped against a text-only model
+# --images-dir so an image isn't silently dropped against a text-only model
 # (every current Claude model is multimodal; the local Ollama default is not).
 VISION_MODEL_HINTS = (
     "claude",                                   # Anthropic (all current models)
@@ -1103,25 +1103,27 @@ def _validate_tileset_match(dataset, id_to_char, tileset_path):
 def generate_captions(dataset_path, tileset_path, output_path, model, url, timeout, retries,
                        grid_format="ascii", tileset_we_path=None, ascii_output_dir=None,
                        backend="ollama", api_key=None, max_tokens=900, max_reprompts=3,
-                       num_captions=5, prompt_log_file="MM2_Prompt.txt", with_images=False,
-                       num_ctx=8192, max_num_ctx=16384, temperature=0.4):
+                       num_captions=5, prompt_log_file="MM2_Prompt.txt",
+                       num_ctx=8192, max_num_ctx=16384, temperature=0.4, images_dir=None):
+    # Passing --images-dir is what turns on image input; there's no separate
+    # on/off flag for it.
+    with_images = images_dir is not None
     image_clause = build_image_clause() if with_images else ""
     prompt_template = build_prompt_template(num_captions, image_clause)
 
     with open(dataset_path, "r", encoding="utf-8") as f:
         dataset = json.load(f)
 
-    # --with-images consumes the per-sample 'image' paths emitted by
-    # mm2pipeline.dataset build --with_images, stored relative to the dataset
-    # JSON's own folder. Resolve them against that folder.
-    dataset_dir = os.path.dirname(os.path.abspath(dataset_path))
+    # Each dataset item's 'image' path (written by mm2pipeline.dataset build
+    # --with_images) is resolved against --images-dir.
+    dataset_dir = os.path.abspath(images_dir) if with_images else os.path.dirname(os.path.abspath(dataset_path))
     if with_images:
         has_any_image = any(
             isinstance(it, dict) and it.get("image") for it in dataset
         )
         if not has_any_image:
             print(
-                "ERROR: --with-images was set, but no items in the dataset carry an "
+                "ERROR: --images-dir was set, but no items in the dataset carry an "
                 "'image' path.\n  Rebuild the dataset with 'python -m mm2pipeline dataset build' "
                 "--with_images so each sample gets a cropped PNG, then retry."
             )
@@ -1593,22 +1595,23 @@ def main():
         help="Disable writing the prompt log file; print the final prompt to the console instead.",
     )
     parser.add_argument(
-        "--with-images",
-        action="store_true",
+        "--images-dir",
+        default=None,
         help=(
-            "Also send each level's rendered PNG crop to the model to supplement the "
-            "ASCII/token grid. The crops are the ones produced by "
-            "mm2pipeline.dataset build --with_images (one per sample, referenced by the "
-            "dataset's 'image' field). REQUIRES a vision-capable model and a backend that "
-            "accepts images (claude, openai, gemini, or an Ollama vision model such as "
-            "llama3.2-vision / llava / qwen2.5vl)."
+            "Directory holding each level's rendered PNG crop (the ones produced by "
+            "mm2pipeline.dataset build --with_images, referenced by the dataset's "
+            "'image' field). Passing this turns on image input: each crop is sent to "
+            "the model alongside the ASCII/token grid. REQUIRES a vision-capable model "
+            "and a backend that accepts images (claude, openai, gemini, or an Ollama "
+            "vision model such as llama3.2-vision / llava / qwen2.5vl). Omit this to "
+            "run text-only."
         ),
     )
     parser.add_argument(
         "--allow-nonvision-model",
         action="store_true",
         help=(
-            "Skip the safety check that --with-images is paired with a vision-capable "
+            "Skip the safety check that --images-dir is paired with a vision-capable "
             "model. Use only if you know the chosen model accepts images."
         ),
     )
@@ -1621,6 +1624,10 @@ def main():
 
     if args.grid_format == "tokens" and not os.path.isfile(args.tileset_we):
         print(f"Error: tileset-we not found: {args.tileset_we}")
+        sys.exit(1)
+
+    if args.images_dir and not os.path.isdir(args.images_dir):
+        print(f"Error: --images-dir not found: {args.images_dir}")
         sys.exit(1)
 
     api_key = None
@@ -1659,9 +1666,9 @@ def main():
 
     # Sending images to a text-only model silently wastes the crop (and on the
     # local Ollama backend, the image is simply ignored). Guard against it.
-    if args.with_images and not model_supports_vision(model) and not args.allow_nonvision_model:
+    if args.images_dir and not model_supports_vision(model) and not args.allow_nonvision_model:
         print(
-            f"Error: --with-images needs a vision-capable model, but '{model}' does not "
+            f"Error: --images-dir needs a vision-capable model, but '{model}' does not "
             f"look like one.\n"
             f"  Use a multimodal model, for example:\n"
             f"    --backend claude  --model claude-sonnet-4-6\n"
@@ -1689,10 +1696,10 @@ def main():
         max_reprompts=args.max_reprompts,
         num_captions=args.num_captions,
         prompt_log_file=None if args.no_prompt_log else args.prompt_log,
-        with_images=args.with_images,
         num_ctx=args.num_ctx,
         max_num_ctx=args.max_num_ctx,
         temperature=args.temperature,
+        images_dir=args.images_dir,
     )
 
 
