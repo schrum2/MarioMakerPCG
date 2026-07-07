@@ -241,6 +241,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_limit", type=int, default=-1, help="If not negative, only train with this many examples")
     parser.add_argument("--output_dir", type=str, default="mlm", help="Directory for training logs and model")
     parser.add_argument('--no_augment', action='store_false', dest='augment', help='Disable data augmentation (default: True)')
+    parser.add_argument("--caption_source_keys", nargs="+", type=str, default=None, help="Each argument names a dataset key holding a LIST of captions, e.g. '--caption_source_keys gemma4:26b_captions deterministic_captions'. The training split draws one caption at random from the pooled sources per access (replacing phrase-shuffle augmentation); val/test pick the first available caption. Samples with no caption under any listed source are dropped. Omit to train on the single 'caption' field instead.")
     parser.add_argument("--checkpoint_freq", type=int, default=20, help="Save checkpoint every N epochs (0 to disable)")
     parser.add_argument("--save_checkpoints", action="store_true", help="Enable periodic checkpoint saving")
     parser.add_argument("--patience", type=int, default=30, help="Number of epochs to wait for improvement in val loss before early stopping (default: 20)")
@@ -269,13 +270,13 @@ if __name__ == "__main__":
     tokenizer = Tokenizer()
     tokenizer.load(args.pkl)
     
-    train_dataset = LevelDataset(args.json, tokenizer, mode="text", augment=args.augment, limit=args.data_limit)
+    train_dataset = LevelDataset(args.json, tokenizer, mode="text", augment=args.augment, limit=args.data_limit, caption_source_keys=args.caption_source_keys)
     val_dataset = None
     if args.val_json:
-        val_dataset = LevelDataset(args.val_json, tokenizer, mode="text", augment=False, limit=-1, shuffle=False, )
+        val_dataset = LevelDataset(args.val_json, tokenizer, mode="text", augment=False, limit=-1, shuffle=False, caption_source_keys=args.caption_source_keys)
     test_dataset = None
     if args.test_json:
-        test_dataset = LevelDataset(args.test_json, tokenizer, mode="text", augment=False, limit=-1, shuffle=False, )
+        test_dataset = LevelDataset(args.test_json, tokenizer, mode="text", augment=False, limit=-1, shuffle=False, caption_source_keys=args.caption_source_keys)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False) if val_dataset is not None else None

@@ -1134,11 +1134,13 @@ def captions_from_entry(entry):
     return captions
 
 
-def load_existing(output_path):
+def load_existing(output_path, caption_mode="legacy", caption_key=None):
     if not os.path.isfile(output_path):
         return {}
     with open(output_path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    if caption_mode == "keyed":
+        return {item["name"]: item for item in data if caption_key in item}
     return {
         item["name"]: item for item in data
         if "captions" in item or "caption" in item or "caption1" in item
@@ -1196,7 +1198,11 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
                        grid_format="ascii", tileset_we_path=None, ascii_output_dir=None,
                        backend="ollama", api_key=None, max_tokens=900, max_reprompts=3,
                        num_captions=5, prompt_log_file="MM2_Prompt.txt",
-                       num_ctx=8192, max_num_ctx=16384, temperature=0.4, images_dir=None):
+                       num_ctx=8192, max_num_ctx=16384, temperature=0.4, images_dir=None,
+                       caption_mode="legacy", caption_key=None):
+    if caption_mode == "keyed" and not caption_key:
+        caption_key = f"{model}_captions"  # default the source key to the model name
+
     # A vision-capable model always gets images alongside the grid; a
     # text-only model never does. There's no separate flag for this.
     with_images = model_supports_vision(model)
@@ -1247,11 +1253,14 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
     if ascii_output_dir:
         os.makedirs(ascii_output_dir, exist_ok=True)
 
-    existing = load_existing(output_path)
+    existing = load_existing(output_path, caption_mode, caption_key)
     if existing:
         print(f"Resuming: {len(existing)} captions already present in {output_path}")
     else:
         print("Starting fresh.")
+
+    if caption_mode == "keyed":
+        print(f"Keyed mode: writing captions under '{caption_key}'")
 
     results = []
     total = len(dataset)
@@ -1449,25 +1458,24 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
 
         print(f"OK ({len(captions)} captions)")
 
-        deterministic = item.get("prompt") if isinstance(item, dict) else None
-        if deterministic:
-            captions.append(deterministic)
+        entry = dict(item) if isinstance(item, dict) else {"scene": scene}  # copy input so metadata/other sources ride along
+        entry["scene"] = scene
+        entry["name"] = name
 
-        entry = {"name": name, "scene": scene}
-        image_rel = item.get("image") if isinstance(item, dict) else None
-        if image_rel:
-            entry["image"] = image_rel
-        for idx, cap in enumerate(captions):
-            entry["caption" if idx == 0 else f"caption{idx}"] = cap
-        # Record which model/backend produced these captions, inline per entry
-        # (the output stays a flat JSON array, so a top-level metadata block would
-        # break load_existing/split_dataset_into_n). The deterministic 'prompt'
-        # caption is appended above but isn't model-generated, so this provenance
-        # only ever describes the LLM captions.
-        entry["caption_model"] = model
-        entry["caption_backend"] = backend
-        if deterministic:
-            entry["prompt"] = deterministic
+        if caption_mode == "keyed":
+            entry[caption_key] = captions
+        else:
+            deterministic = item.get("prompt") if isinstance(item, dict) else None
+            legacy_caps = list(captions)
+            if deterministic:
+                legacy_caps.append(deterministic)  # old-style output folds the deterministic caption in as an extra alternative
+            for k in [k for k in entry
+                      if k == "caption" or (k.startswith("caption") and k[len("caption"):].isdigit())]:
+                del entry[k]  # drop the copied caption fields before rewriting them
+            for idx, cap in enumerate(legacy_caps):
+                entry["caption" if idx == 0 else f"caption{idx}"] = cap
+            entry["caption_model"] = model
+            entry["caption_backend"] = backend
         results.append(entry)
         generated += 1
 
@@ -1577,6 +1585,27 @@ def main():
             "How many captions to generate per level. The prompt adapts: with 1 it asks "
             "for a single natural caption, with 2+ it asks for that many that vary widely "
             "in length and register. Default: 1"
+        ),
+    )
+    parser.add_argument(
+        "--caption-mode",
+        choices=["legacy", "keyed"],
+        default="legacy",
+        help=(
+            "Output schema. 'legacy' (default) writes 'caption'/'caption1'/... fields. "
+            "'keyed' writes the captions as a list under --caption-key (default "
+            "'<model>_captions'), so a scene can carry captions from several models at once. "
+            "In both modes every other input attribute (metadata and captions from other "
+            "sources) is copied to the output, so passing a previously-captioned dataset back "
+            "in accumulates sources rather than replacing them."
+        ),
+    )
+    parser.add_argument(
+        "--caption-key",
+        default=None,
+        help=(
+            "Key to store the caption list under when --caption-mode keyed. "
+            "Default: '<model>_captions' (e.g. 'qwen2.5:14b_captions')."
         ),
     )
     parser.add_argument(
@@ -1777,6 +1806,8 @@ def main():
         max_num_ctx=args.max_num_ctx,
         temperature=args.temperature,
         images_dir=args.images_dir,
+        caption_mode=args.caption_mode,
+        caption_key=args.caption_key,
     )
 
 

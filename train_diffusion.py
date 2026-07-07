@@ -85,6 +85,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=32, help="Training batch size") # TODO: Consider reducing to 16 to help generalization
     parser.add_argument("--augment", action="store_true", help="Enable data augmentation")
     parser.add_argument("--no_multiple_captions", dest="multiple_captions", action="store_false", default=True, help="Disable multiple-caption selection. By default, when a sample stores several captions ('caption', 'caption1', ...) one is chosen at random per access, and that selection is the only augmentation (phrase shuffling and scene flipping are disabled). Pass this flag to instead use only the canonical 'caption' field with phrase-shuffle augmentation. Multiple-caption selection is automatically disabled for unconditional or negative-prompt training regardless of this flag.")
+    parser.add_argument("--caption_source_keys", nargs="+", type=str, default=None, help="Each argument names a dataset key holding a LIST of captions, e.g. '--caption_source_keys gemma4:26b_captions qwen3:32b_captions deterministic_captions'. During training, one caption is drawn at random from the pooled captions of all the listed sources; validation picks the first available caption deterministically. Samples with no caption under any listed source are dropped. Omit this to train on the single 'caption' field instead.")
     parser.add_argument("--complete_levels", action="store_true", help="Treat scenes as variable-size complete levels: group them into --num_buckets size buckets and pad each up to its bucket's shared shape with the null/void tile (--pad_tile_id). Use with datasets built via 'create_megaman_json_data.py --scan_mode whole'.")
     parser.add_argument("--num_buckets", type=int, default=5, help="Number of size buckets when --complete_levels is set.")
     parser.add_argument("--pad_tile_id", type=int, default=None, help="Tile id used to fill the pad region under --complete_levels (the null/void tile). Defaults to the 'null'-descriptor tile resolved from --tileset.")
@@ -356,10 +357,17 @@ def main():
     if args.split_pretrained_sentences and not args.pretrained_language_model:
         raise ValueError("Sentence splitting requires the use of a pretrained language model")
 
+    if args.caption_source_keys:
+        if args.negative_prompt_training:
+            raise ValueError("--caption_source_keys cannot be combined with --negative_prompt_training")  # captions are free-form text, not the pos/neg phrase format
+        if not args.text_conditional:
+            print("Note: --caption_source_keys is ignored for unconditional training (scenes carry no captions).")
+            args.caption_source_keys = None
+
     # Multiple-caption selection is on by default, but only applies to text-conditional,
     # non-negative training. Auto-disable it (rather than erroring) for the incompatible
     # modes so unconditional and negative-prompt runs keep working with the default.
-    if args.multiple_captions:
+    if args.multiple_captions and not args.caption_source_keys:  # caption_source_keys handles its own selection
         if not args.text_conditional:
             # Unconditional scenes carry no captions, so there is nothing to select among.
             args.multiple_captions = False
@@ -464,6 +472,7 @@ def main():
                                         block_embeddings=block_embeddings, batch_size=args.batch_size,
                                         persistent_workers=(not args.auto_augment),
                                         multiple_captions=args.multiple_captions,
+                                        caption_source_keys=args.caption_source_keys,
                                         require_captions=args.text_conditional,
                                         bucket_levels=args.complete_levels, num_buckets=args.num_buckets,
                                         pad_tile_id=pad_tile_id, unet_factor=unet_factor,

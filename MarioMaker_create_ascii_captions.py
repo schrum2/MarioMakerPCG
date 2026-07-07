@@ -203,7 +203,13 @@ def assign_caption(scene, id_to_char, char_names, ground_chars=None,
     return " ".join(f"{p}." for p in phrases)
 
 
-def generate_captions(dataset_path, tileset_path, output_path):
+def generate_captions(dataset_path, tileset_path, output_path,
+                      caption_mode="legacy", caption_key="deterministic_captions"):
+    """Write a deterministic caption for every scene.
+
+    "legacy" stores it in the "caption" field; "keyed" stores it as a one-element list under
+    caption_key. Either way every other input attribute is copied through.
+    """
     with open(dataset_path, "r", encoding="utf-8") as f:
         dataset = json.load(f)
 
@@ -218,18 +224,19 @@ def generate_captions(dataset_path, tileset_path, output_path):
         meta_phrases = metadata_phrases(item) if is_dict else []
         caption = assign_caption(scene, id_to_char, char_names, ground_chars,
                                  meta_phrases)
-        entry = {"scene": scene, "caption": caption}
-        if isinstance(item, dict):
-            if "name" in item:
-                entry["name"] = item["name"]
-            if "prompt" in item:
-                entry["prompt"] = item["prompt"]
+        entry = dict(item) if is_dict else {}  # copy all input attributes so metadata/other sources carry through
+        entry["scene"] = scene
+        if caption_mode == "keyed":
+            entry[caption_key] = [caption]
+        else:
+            entry["caption"] = caption
         captioned.append(entry)
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(captioned, f, indent=2, ensure_ascii=False)
 
-    print(f"Captioned {len(captioned)} scenes -> {output_path}")
+    dest = f'"{caption_key}" list' if caption_mode == "keyed" else '"caption" field'
+    print(f"Captioned {len(captioned)} scenes into the {dest} -> {output_path}")
 
 
 if __name__ == "__main__":
@@ -237,6 +244,22 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", required=True, help="Input dataset JSON.")
     parser.add_argument("--tileset", required=True, help="Tileset JSON (e.g. mm2_tileset_we.json); names are read from its tile tags.")
     parser.add_argument("--output", required=True, help="Output captioned JSON.")
+    parser.add_argument(
+        "--caption-mode",
+        choices=["legacy", "keyed"],
+        default="legacy",
+        help=(
+            "Output schema. 'legacy' (default) writes the single 'caption' field. 'keyed' "
+            "writes the caption as a one-element list under --caption-key, so a scene can carry "
+            "captions from several sources at once. Both modes copy all other input attributes "
+            "(metadata and captions from other sources) to the output."
+        ),
+    )
+    parser.add_argument(
+        "--caption-key",
+        default="deterministic_captions",
+        help="Key to store the caption list under when --caption-mode keyed. Default: deterministic_captions",
+    )
     args = parser.parse_args()
 
     if not os.path.isfile(args.dataset):
@@ -246,4 +269,5 @@ if __name__ == "__main__":
         print(f"Error: tileset not found: {args.tileset}")
         sys.exit(1)
 
-    generate_captions(args.dataset, args.tileset, args.output)
+    generate_captions(args.dataset, args.tileset, args.output,
+                      caption_mode=args.caption_mode, caption_key=args.caption_key)
