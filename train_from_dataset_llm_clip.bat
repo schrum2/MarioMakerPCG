@@ -49,7 +49,7 @@ if exist "%GEN_DIR%" rd /s /q "%GEN_DIR%"
 
 echo.
 echo === [1/4] train/validate/test split + tokenizer (dataset assumed captioned) ===
-%PY% -m mm2pipeline.dataset split --input "%DATASET%" --seed %SEED%
+%PY% -m mm2pipeline_data.dataset split --input "%DATASET%" --seed %SEED%
 if errorlevel 1 goto error
 %PY% tokenizer.py save --json_file "%BASE%-train.json" --pkl_file "%TOKENIZER%"
 if errorlevel 1 goto error

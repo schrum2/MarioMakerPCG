@@ -48,7 +48,7 @@ if exist "%GEN_DIR%" rd /s /q "%GEN_DIR%"
 
 echo.
 echo === [1/6] building sliding-window dataset (%WINDOW%x%WINDOW%, stride %STRIDE%, goal stripped, +images) ===
-%PY% -m mm2pipeline.dataset build --input "%ASCII%" --output_folder "%DATASET%" --tileset %TILESET% --sliding_window --stride %STRIDE% --window_h %WINDOW% --window_w %WINDOW% --strip_goal --with_images
+%PY% -m mm2pipeline_data.dataset build --input "%ASCII%" --output_folder "%DATASET%" --tileset %TILESET% --sliding_window --stride %STRIDE% --window_h %WINDOW% --window_w %WINDOW% --strip_goal --with_images
 if errorlevel 1 goto error
 
 echo.
@@ -58,7 +58,7 @@ if errorlevel 1 goto error
 
 echo.
 echo === [3/6] train/validate/test split + tokenizer ===
-%PY% -m mm2pipeline.dataset split --input "%CAPTIONED%" --seed %SEED%
+%PY% -m mm2pipeline_data.dataset split --input "%CAPTIONED%" --seed %SEED%
 if errorlevel 1 goto error
 %PY% tokenizer.py save --json_file "%BASE%-train.json" --pkl_file "%TOKENIZER%"
 if errorlevel 1 goto error

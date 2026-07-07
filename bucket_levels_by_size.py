@@ -20,20 +20,20 @@ them together with combine_data.py, then train. The diffusion trainer's
 BucketBatchSampler keeps every batch to a single scene size, so a merged file
 that mixes several sizes trains fine.
 
-The tile ids come from mm2pipeline.dataset.load_tileset, the same mapping
+The tile ids come from mm2pipeline_data.dataset.load_tileset, the same mapping
 the windowed dataset builder uses, so a level encoded here lands in the exact
 same id space as datasets/MM_Levels-regular.json (air " " = 0, unknown chars ->
 the extra "_" tile).
 
 The raw json->ascii export writes a direction-specific arrow for each pipe (see
-mm2pipeline.ascii._PIPE_DIR_CHAR), but the training tileset keeps only the single
+mm2pipeline_data.ascii._PIPE_DIR_CHAR), but the training tileset keeps only the single
 pipe glyph "|". Those arrows are folded back onto "|" before the id lookup (see
 PIPE_ARROW_TO_GLYPH) so a pipe encodes as the pipe tile instead of the unknown
 tile; on an export that already uses "|" the fold is a no-op.
 
 Padding always keeps the level bottom-left aligned: air is added above and to
 the right, so the ground stays on the bottom rows and the start of the level on
-the left -- matching how mm2pipeline.dataset lays scenes out in a window.
+the left -- matching how mm2pipeline_data.dataset lays scenes out in a window.
 
 A bucket's target size is rounded up to --size-multiple (default 4) because the
 UNet halves the scene's width and height at each downsampling block; a target
@@ -81,9 +81,9 @@ import sys
 
 # Reuse the exact level splitter, tileset loader and bounding-box measurement the
 # rest of the pipeline uses, so "a level", "a tile id" and "a size" all mean the
-# same thing here as they do in mm2pipeline.dataset / the scatter plot.
+# same thing here as they do in mm2pipeline_data.dataset / the scatter plot.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mm2pipeline.dataset import (  # noqa: E402
+from mm2pipeline_data.dataset import (  # noqa: E402
     collect_input_files,
     parse_source_file,
     load_tileset,
@@ -96,11 +96,11 @@ import util.common_settings as common_settings  # noqa: E402
 import combine_data  # noqa: E402  (Fletcher's merge helper, reused for --merged_output)
 
 # Warn about a level when this fraction of its characters aren't in the tileset;
-# the same threshold mm2pipeline.dataset uses to flag a likely wrong tileset.
+# the same threshold mm2pipeline_data.dataset uses to flag a likely wrong tileset.
 UNMAPPED_WARN_RATIO = 0.2
 
 # The four pipe-direction arrows the json->ascii export emits (see
-# mm2pipeline.ascii._PIPE_DIR_CHAR) all map to the one pipe glyph the tileset
+# mm2pipeline_data.ascii._PIPE_DIR_CHAR) all map to the one pipe glyph the tileset
 # keeps, so a pipe encodes as "|" rather than collapsing to the unknown tile.
 PIPE_ARROW_TO_GLYPH = str.maketrans({"→": "|", "←": "|", "↑": "|", "↓": "|"})
 

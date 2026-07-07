@@ -3,7 +3,7 @@ REM Usage: extract_levels_to_ascii.bat <name> <count> <output_folder> [extra ext
 REM <name>          level name filter; pass "" to skip filtering by name
 REM <count>         number of levels to extract
 REM <output_folder> folder that will hold bcd/, json/, images/ and ascii/ subfolders
-REM [extra]         passed straight to mm2pipeline.extract, e.g.
+REM [extra]         passed straight to mm2pipeline_data.extract, e.g.
 REM                 --tag Speedrun --difficulty Easy Normal
 REM                 --likes 1000 --dislikes 300 --exclude-tag Art
 cd ..
@@ -75,7 +75,7 @@ set JSON_DIR=%OUTPUT%\json
 set IMAGES_DIR=%OUTPUT%\images
 set ASCII_DIR=%OUTPUT%\ascii
 REM Per-level metadata sidecar (level_name/difficulty/gamestyle/theme/tags),
-REM keyed by ascii stem. mm2pipeline.dataset build reads it with --metadata
+REM keyed by ascii stem. mm2pipeline_data.dataset build reads it with --metadata
 REM (or auto-detects it since it lives in the ascii folder).
 set METADATA=%ASCII_DIR%\metadata.json
 
@@ -88,16 +88,16 @@ if "%NAME%"=="" (
 )
 
 echo === Step 1: Extracting up to %COUNT% level^(s^) ===
-python -m mm2pipeline.extract %FILTER_ARGS% --output_folder "%BCD_DIR%" --skip_3dworld --skip_items --skip_subworld_items%EXTRA%
-if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline.extract failed. & exit /b 1 )
+python -m mm2pipeline_data.extract %FILTER_ARGS% --output_folder "%BCD_DIR%" --skip_3dworld --skip_items --skip_subworld_items%EXTRA%
+if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline_data.extract failed. & exit /b 1 )
 
 echo === Step 2: Converting .bcd files to .json and images ===
-python -m mm2pipeline.toost --input "%BCD_DIR%" -o "%JSON_DIR%" --images-output "%IMAGES_DIR%"
-if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline.toost failed. & exit /b 1 )
+python -m mm2pipeline_data.toost --input "%BCD_DIR%" -o "%JSON_DIR%" --images-output "%IMAGES_DIR%"
+if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline_data.toost failed. & exit /b 1 )
 
 echo === Step 3: Converting .json files to ASCII ===
-python -m mm2pipeline.ascii to-ascii --input "%JSON_DIR%" --output_folder "%ASCII_DIR%" --metadata_output "%METADATA%"
-if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline.ascii failed. & exit /b 1 )
+python -m mm2pipeline_data.ascii to-ascii --input "%JSON_DIR%" --output_folder "%ASCII_DIR%" --metadata_output "%METADATA%"
+if %ERRORLEVEL% neq 0 ( echo ERROR: mm2pipeline_data.ascii failed. & exit /b 1 )
 
 REM Record the name filter and the level count (one .txt per level) so
 REM summarize_dataset.py can pick them up later when it summarizes the dataset.
@@ -122,4 +122,4 @@ echo   ASCII:    %ASCII_DIR%
 echo   Metadata: %METADATA%
 echo.
 echo Build the dataset with the metadata folded in, e.g.:
-echo   python -m mm2pipeline.dataset build --input "%ASCII_DIR%" --output_folder dataset.json --tileset mm2_tileset_we.json --metadata "%METADATA%"
+echo   python -m mm2pipeline_data.dataset build --input "%ASCII_DIR%" --output_folder dataset.json --tileset mm2_tileset_we.json --metadata "%METADATA%"

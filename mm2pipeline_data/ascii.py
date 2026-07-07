@@ -2,10 +2,10 @@
 diffusion model trains on.
 
 Usage:
-    python -m mm2pipeline.ascii to-ascii --input <json_folder> --output_folder <ascii_folder>
-    python -m mm2pipeline.ascii to-json  --input <txt file or folder> --output_folder <json_folder>
+    python -m mm2pipeline_data.ascii to-ascii --input <json_folder> --output_folder <ascii_folder>
+    python -m mm2pipeline_data.ascii to-json  --input <txt file or folder> --output_folder <json_folder>
 
-Object metadata comes from mm2pipeline.tiles. Both directions are lossy: the
+Object metadata comes from mm2pipeline_data.tiles. Both directions are lossy: the
 forward path folds off-tileset glyphs (ASCII_REPLACEMENTS / ASCII_DROP), the
 reverse path rebuilds baseline objects via coalesce() plus semisolid and
 goal repair.
@@ -301,7 +301,7 @@ def build_ascii_grid(level):
 
 def level_metadata(lvl):
     """Human-readable fields to carry into the dataset. tags/difficulty were
-    folded in earlier by mm2pipeline.toost."""
+    folded in earlier by mm2pipeline_data.toost."""
     return {
         "level_name": lvl.get("name", ""),
         "difficulty": lvl.get("difficulty"),
@@ -325,7 +325,7 @@ def json_to_ascii_file(infile, outdir, metadata=None):
         out_stem = f"{stem}{suffix}"
         outfile = Path(outdir) / f"{out_stem}.txt"
         outfile.write_text("\n".join(build_ascii_grid(lvl)) + "\n", encoding="utf-8")
-        # Keyed by ascii stem so mm2pipeline.dataset can match it back.
+        # Keyed by ascii stem so mm2pipeline_data.dataset can match it back.
         if metadata is not None:
             metadata[out_stem] = level_metadata(lvl)
 
@@ -338,7 +338,7 @@ def main_json_to_ascii(argv=None):
                     help="Where to write the per-level metadata JSON (level_name, "
                          "difficulty, gamestyle, theme, tags), keyed by ascii file "
                          "stem. Default: <output_folder>/metadata.json. This is the "
-                         "file mm2pipeline.dataset reads with --metadata.")
+                         "file mm2pipeline_data.dataset reads with --metadata.")
     args = ap.parse_args(argv)
 
     outdir = Path(args.output_folder)
@@ -743,7 +743,7 @@ def ascii_to_level(text, source_file=None, *, gamestyle_raw=22349, theme_raw=0,
 
     level = {
         "name": stem,
-        "description": "Reconstructed from ASCII by mm2pipeline.ascii",
+        "description": "Reconstructed from ASCII by mm2pipeline_data.ascii",
         "gamestyle": GAMESTYLE_NAME.get(gamestyle_raw, "SMW"),
         "gamestyle_raw": gamestyle_raw,
         "theme": THEME_NAME.get(theme_raw, "Ground"),
@@ -858,7 +858,7 @@ def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
     if not argv or argv[0] not in ("to-ascii", "to-json"):
-        print("Usage: python -m mm2pipeline.ascii {to-ascii|to-json} [options]")
+        print("Usage: python -m mm2pipeline_data.ascii {to-ascii|to-json} [options]")
         print("  to-ascii   level JSON folder -> ASCII grids (+ metadata.json)")
         print("  to-json    ASCII grids -> level JSON")
         sys.exit(2)

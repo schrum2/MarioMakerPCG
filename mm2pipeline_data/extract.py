@@ -4,20 +4,20 @@ TheGreatRambler/mm2_level HuggingFace dataset for use with Toost.
 Usage
 -----
     # Stream a small sample (recommended for testing):
-    python -m mm2pipeline.extract --output_folder ./bcd_levels --limit 100
+    python -m mm2pipeline_data.extract --output_folder ./bcd_levels --limit 100
 
     # Extract specific data_ids:
-    python -m mm2pipeline.extract --ids 3000004 3000007
+    python -m mm2pipeline_data.extract --ids 3000004 3000007
 
     # Filter on server-side metadata:
-    python -m mm2pipeline.extract --tag Speedrun --limit 50
-    python -m mm2pipeline.extract --likes 1000 --dislikes 300 --exclude-tag Art
+    python -m mm2pipeline_data.extract --tag Speedrun --limit 50
+    python -m mm2pipeline_data.extract --likes 1000 --dislikes 300 --exclude-tag Art
 
     # Extract everything (streaming, ~100 GB):
-    python -m mm2pipeline.extract --output_folder ./bcd_levels
+    python -m mm2pipeline_data.extract --output_folder ./bcd_levels
 
 Besides the .bcd files, a `level_metadata.json` index (stem -> difficulty/tags)
-is written to the output folder; mm2pipeline.toost folds it into the exported
+is written to the output folder; mm2pipeline_data.toost folds it into the exported
 level JSONs so the metadata survives the rest of the pipeline.
 
 Requirements:

@@ -1,6 +1,6 @@
 """
 Rebuild a .bcd course file from the JSON exported by Toost
-(toost.exe --overworldJson / --subworldJson, see mm2pipeline.toost).
+(toost.exe --overworldJson / --subworldJson, see mm2pipeline_data.toost).
 
 Toost exports one JSON file per map (overworld/subworld), each duplicating
 the level-wide header fields (name, description, gamestyle, clear
@@ -36,7 +36,7 @@ import json
 import struct
 from pathlib import Path
 
-from mm2pipeline.bcd import build_bcd, PAYLOAD_SIZE
+from mm2pipeline_data.bcd import build_bcd, PAYLOAD_SIZE
 
 # ---------------------------------------------------------------------------
 # Fixed array sizes / element sizes, per level.ksy
@@ -290,7 +290,7 @@ ATOMIC_BLOCK_IDS = {
 # "Stretchy" platforms whose w/h directly describe their footprint: Mushroom
 # Platform draws a stem for the lower rows plus a full-width cap on top;
 # Semisolid/Half-Collision fill the whole w x h box (see build_ascii_grid in
-# mm2pipeline.ascii). SMM2 won't place any of these smaller than 3x3; see
+# mm2pipeline_data.ascii). SMM2 won't place any of these smaller than 3x3; see
 # _fix_platform_objects.
 PLATFORM_FILL_IDS = {14, 16, 71}  # Mushroom / Semisolid / Half-Collision Platform
 PLATFORM_MIN_SIZE = 3

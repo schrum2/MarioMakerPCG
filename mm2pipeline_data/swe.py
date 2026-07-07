@@ -18,8 +18,8 @@ recomputed from neighbour occupancy, slopes become solid ground. Constants
 marked "verified" come from saves placed by hand in the SMMWE editor.
 
 Usage:
-    python -m mm2pipeline.swe --input bcd_levels/json/<id>_overworld.json
-    python -m mm2pipeline.swe --input <file or folder> -o <out> --user <smmwe name>
+    python -m mm2pipeline_data.swe --input bcd_levels/json/<id>_overworld.json
+    python -m mm2pipeline_data.swe --input <file or folder> -o <out> --user <smmwe name>
 
 A matching *_subworld.json next to the overworld file becomes SB1.
 """

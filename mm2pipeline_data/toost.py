@@ -6,7 +6,7 @@ as cwd. All input/output paths are resolved to absolute first, so conversion
 works regardless of where this module is invoked from.
 
 If the input folder carries a level_metadata.json index (written by
-mm2pipeline.extract), each level's server-side difficulty/tags are folded into
+mm2pipeline_data.extract), each level's server-side difficulty/tags are folded into
 the exported JSONs, since Toost can't emit fields that aren't in the .bcd.
 """
 import os
@@ -67,7 +67,7 @@ def world_size(json_path):
 
 
 def load_metadata_index(input_dir):
-    # level_metadata.json (from mm2pipeline.extract) maps each .bcd stem to the
+    # level_metadata.json (from mm2pipeline_data.extract) maps each .bcd stem to the
     # server-side fields that aren't in the .bcd payload: {difficulty, tags}.
     path = os.path.join(input_dir, "level_metadata.json")
     if not os.path.isfile(path):

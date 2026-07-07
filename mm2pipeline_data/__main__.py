@@ -1,6 +1,6 @@
 """Single entry point for the whole conversion pipeline.
 
-    python -m mm2pipeline <command> [options]
+    python -m mm2pipeline_data <command> [options]
 
 Commands (in pipeline order):
     extract         HuggingFace mm2_level dataset -> .bcd files
@@ -10,8 +10,8 @@ Commands (in pipeline order):
     ascii-to-json   generated ASCII -> level JSON
     swe             level JSON -> playable .swe (SMM: World Engine)
 
-Each command forwards to its stage module, so `python -m mm2pipeline extract`
-and `python -m mm2pipeline.extract` are the same thing. Run any command with
+Each command forwards to its stage module, so `python -m mm2pipeline_data extract`
+and `python -m mm2pipeline_data.extract` are the same thing. Run any command with
 --help for its options.
 """
 import sys

@@ -30,7 +30,7 @@ MM2_TILE_PIXEL_DIM = 16
 MM2_WIDTH = 20
 MM2_HEIGHT = 20
 # Default game style used to pick sprites (data is generated SMW by default in
-# mm2pipeline.ascii). One of: SMB1, SMB3, SMW, NSMBU, SM3DW.
+# mm2pipeline_data.ascii). One of: SMB1, SMB3, SMW, NSMBU, SM3DW.
 MM2_GAMESTYLE = 'SMW'
 # MM2 sky-blue backdrop (toost's canvas background, #5C94FC) — composited behind
 # each (often transparent) sprite so the tile grid reads correctly.

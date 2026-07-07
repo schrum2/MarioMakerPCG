@@ -3,24 +3,24 @@
 # Setting up
 Run `pip install -r requirements.txt`
 
-# The conversion pipeline (mm2pipeline)
+# The conversion pipeline (mm2pipeline_data)
 
 Every format conversion (HuggingFace dump -> .bcd -> JSON/PNG -> ASCII ->
 dataset -> generated ASCII -> JSON -> playable .swe) lives in the
-[mm2pipeline](mm2pipeline/README.md) package and runs through one entry point:
+[mm2pipeline_data](mm2pipeline_data/README.md) package and runs through one entry point:
 
 ```
-python -m mm2pipeline <command>     (extract | toost | json-to-ascii | dataset | ascii-to-json | swe)
+python -m mm2pipeline_data <command>     (extract | toost | json-to-ascii | dataset | ascii-to-json | swe)
 ```
 
-See [mm2pipeline/README.md](mm2pipeline/README.md) for full instructions and
+See [mm2pipeline_data/README.md](mm2pipeline_data/README.md) for full instructions and
 walkthroughs. Common one-liners:
 
 **Build a dataset from ASCII level files:**
-python -m mm2pipeline dataset build --input <input.txt or folder> --output_folder <dataset_name>.json --tileset extended_tiles.json --sliding_window --stride 20 --convert_to_extended
+python -m mm2pipeline_data dataset build --input <input.txt or folder> --output_folder <dataset_name>.json --tileset extended_tiles.json --sliding_window --stride 20 --convert_to_extended
 
 **Convert a level .json to SWE (playable in SMM: World Engine):**
-python -m mm2pipeline swe --input <json file or folder> -o <output .swe path or folder> --user <username>
+python -m mm2pipeline_data swe --input <json file or folder> -o <output .swe path or folder> --user <username>
 
 # Running Bat Files
 

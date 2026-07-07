@@ -7,14 +7,14 @@ plot them as a scatter (width = x, height = y) so the distribution of level
 sizes across 2D space is visible.
 
 This deliberately works on the full, un-cropped levels -- the same
-"(source_num)"-delimited levels that mm2pipeline.dataset reads -- and
+"(source_num)"-delimited levels that mm2pipeline_data.dataset reads -- and
 NOT the 20x20 windows the dataset builder slices out of them. The point is to
 see how big the source levels actually are before any windowing/padding, to
 inform whether smaller levels should be padded up rather than larger levels
 chopped down.
 
 Width  = number of columns = the longest row in the level (trailing newlines
-         stripped, matching mm2pipeline.dataset).
+         stripped, matching mm2pipeline_data.dataset).
 Height = number of rows = the level's row count after leading/trailing fully
          blank lines are removed.
 
@@ -29,7 +29,7 @@ import sys
 # Reuse the exact level splitter the dataset builder uses so "a level" here
 # means the same thing it means downstream.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mm2pipeline.dataset import (  # noqa: E402
+from mm2pipeline_data.dataset import (  # noqa: E402
     parse_source_file,
     collect_input_files,
 )

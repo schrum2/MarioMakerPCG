@@ -1114,7 +1114,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
     with open(dataset_path, "r", encoding="utf-8") as f:
         dataset = json.load(f)
 
-    # Each dataset item's 'image' path (written by mm2pipeline.dataset build
+    # Each dataset item's 'image' path (written by mm2pipeline_data.dataset build
     # --with_images) is resolved against --images-dir, defaulting to the
     # dataset JSON's own folder.
     dataset_dir = os.path.abspath(images_dir) if images_dir else os.path.dirname(os.path.abspath(dataset_path))
@@ -1125,7 +1125,7 @@ def generate_captions(dataset_path, tileset_path, output_path, model, url, timeo
         if not has_any_image:
             print(
                 f"ERROR: model '{model}' is vision-capable, but no items in the dataset carry "
-                "an 'image' path.\n  Rebuild the dataset with 'python -m mm2pipeline dataset "
+                "an 'image' path.\n  Rebuild the dataset with 'python -m mm2pipeline_data dataset "
                 "build --with_images' so each sample gets a cropped PNG, then retry."
             )
             sys.exit(1)
@@ -1600,7 +1600,7 @@ def main():
         default=None,
         help=(
             "Directory holding each level's rendered PNG crop (the ones produced by "
-            "mm2pipeline.dataset build --with_images, referenced by the dataset's "
+            "mm2pipeline_data.dataset build --with_images, referenced by the dataset's "
             "'image' field). Defaults to the dataset JSON's own folder. Only matters "
             "when --model is vision-capable (claude, gpt-4o, gemini, or an Ollama "
             "vision model such as llama3.2-vision / llava / qwen2.5vl) -- such models "

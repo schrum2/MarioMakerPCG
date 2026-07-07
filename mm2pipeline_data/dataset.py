@@ -2,13 +2,13 @@
 train/validate/test.
 
 Two subcommands when run as a module:
-    python -m mm2pipeline.dataset build  --input ... --output_folder ... --tileset ...
-    python -m mm2pipeline.dataset split  --input ...
+    python -m mm2pipeline_data.dataset build  --input ... --output_folder ... --tileset ...
+    python -m mm2pipeline_data.dataset split  --input ...
 
 ``build`` parses each .txt file into per-level row lists (split on "(source_num)"
 headers), crops each level to a WINDOW_H x WINDOW_W window (best window, or every
 window with --sliding_window) and emits a grid of tile ids. Per-level metadata
-(the metadata.json sidecar written by ``mm2pipeline.ascii to-ascii``) is folded
+(the metadata.json sidecar written by ``mm2pipeline_data.ascii to-ascii``) is folded
 into each sample, the goal can be stripped with --strip_goal, mostly-air windows
 are diverted to a companion "dropped" dataset, and --with_images crops the
 matching slice of each level's rendered PNG. ``split`` shuffles a dataset and
@@ -480,7 +480,7 @@ def main_build(argv=None):
                              "fallback. Default: the input drive.")
     parser.add_argument("--metadata", default=None,
                         help="Path to the per-level metadata JSON produced by "
-                             "'mm2pipeline.ascii to-ascii' (keyed by ascii file "
+                             "'mm2pipeline_data.ascii to-ascii' (keyed by ascii file "
                              "stem, with level_name/difficulty/gamestyle/theme/"
                              "tags). Each sample from a level is tagged with its "
                              "metadata. If omitted, a 'metadata.json' sitting in "
@@ -776,7 +776,7 @@ def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
     if not argv or argv[0] not in ("build", "split"):
-        print("Usage: python -m mm2pipeline.dataset {build|split} [options]")
+        print("Usage: python -m mm2pipeline_data.dataset {build|split} [options]")
         sys.exit(2)
     sub, rest = argv[0], argv[1:]
     if sub == "build":

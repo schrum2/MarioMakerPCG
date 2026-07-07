@@ -9,8 +9,8 @@ out-of-tileset objects are filtered upstream during extraction); ``NAME_TO_ID``
 and the gamestyle/theme maps drive the reverse (ASCII -> JSON) direction.
 
 Id tables tied to a binary format live with their stage instead: ``OBJ_ID`` in
-:mod:`mm2pipeline.bcd` (the level.ksy parser) and ``OBJ_ID_MAP`` in
-:mod:`mm2pipeline.swe` (the SMMWE save format).
+:mod:`mm2pipeline_data.bcd` (the level.ksy parser) and ``OBJ_ID_MAP`` in
+:mod:`mm2pipeline_data.swe` (the SMMWE save format).
 """
 import json
 
@@ -450,7 +450,7 @@ def contained_item_glyph(cid, gamestyle_raw):
 
 # ---------------------------------------------------------------------------
 # Game style / theme maps (single copy for the whole pipeline;
-# mm2pipeline.swe uses its own SWE-int variants).
+# mm2pipeline_data.swe uses its own SWE-int variants).
 # ---------------------------------------------------------------------------
 
 GAMESTYLE_RAW = {
