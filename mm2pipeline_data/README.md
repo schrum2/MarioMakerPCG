@@ -80,6 +80,7 @@ python -m mm2pipeline_data dataset build --input out\ascii --output_folder datas
 REM    Useful options: --strip_goal (train without flagpoles), --window_h/--window_w,
 REM    --min_tiles_pct (drop mostly-air windows; rejects go to *_dropped.json),
 REM    --with_images (crop the matching PNG slice per sample),
+REM    --captions (fold in deterministic captions; add --build_tokenizer for the .pkl),
 REM    --convert_to_extended / --convert_to_vglc (alternate tile vocabularies).
 
 REM 5. Split into train/validate/test (writes dataset-train.json etc.).
